@@ -8,3 +8,4 @@ Status를 포함한다.
 현재 결정:
 
 - [0001 Gateway로 App Server를 감싼다](0001-gateway-not-direct-app-server.md)
+- [0002 Phase 1 Gateway 기술 기준](0002-phase-1-technical-baseline.md)

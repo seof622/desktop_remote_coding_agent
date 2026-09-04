@@ -6,3 +6,6 @@
 .env
 .env.*
 !.env.example
+
+# 로컬 Gateway 영속 데이터
+data/

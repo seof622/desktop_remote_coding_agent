@@ -202,9 +202,9 @@ CodexProvider가 Session 재개를 지원하면 `thread/resume`로 상태를 확
 - Phase 1 완료 전: 지원 capability, 재연결 보존 범위, 승인 제한, Codex CLI/App Server 버전 호환성을 README에 명시한다.
 - 외부 API 계약이 확정 또는 변경될 때마다 `.agents/templates/api-change.md` 체크 항목을 PR 또는 작업 설명에 반영한다.
 
-## Open decisions before implementation
+## Resolved technical baseline
 
-1. Gateway의 TypeScript/Node.js + SQLite 기준안을 채택할지, 다른 런타임을 사용할지 결정한다.
-2. 영속 저장소 위치와 이벤트 보존 정책(기간·최대 개수)을 결정한다.
-3. Tailscale 바인딩 방식과 Client Token의 저장 위치(환경 변수 또는 OS 비밀 저장소)를 결정한다.
-4. 지원할 Codex CLI/App Server 최소 버전과 schema 생성물을 저장소에 커밋할지 결정한다.
+런타임, 저장소, 이벤트 보존, Tailscale 바인딩, Client Token, Codex 계약 관리 기준은
+[ADR 0002](../../.agents/decisions/0002-phase-1-technical-baseline.md)에서 확정했다.
+
+Codex CLI/App Server의 정확한 최소 버전은 첫 실제 통합 구현에서 호환성 검증 후 pin한다.
