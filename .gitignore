@@ -1,0 +1,8 @@
+# 개인별 에이전트 지침과 로컬 운영 정보
+.agents/local/
+.agents/**/*.local.md
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
