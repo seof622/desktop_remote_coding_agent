@@ -349,9 +349,38 @@ Provider가 해당 상태를 제공하지 않으면 Gateway는 마지막으로 �
 
 ---
 
-## Mobile API 초안
+## Phase 1 실행
 
-Provider별 프로토콜을 그대로 외부에 노출하지 않고, Provider 중립적인 애플리케이션 API로 추상화한다.
+Node.js 22.5 이상과 Codex CLI가 필요하다. 현재 지원 기준은 `codex-cli 0.153.0`이며, 이 버전에서
+생성한 App Server schema와 `initialize` → `initialized` → `thread/start` 수직 경로를 확인했다.
+Gateway는 `codex app-server`를 자식 프로세스의 stdio JSON-RPC로만 실행하며, App Server 포트를 열거나
+모바일에 JSON-RPC를 노출하지 않는다.
+
+```powershell
+$env:GATEWAY_CLIENT_TOKEN = "32자 이상인-임의의-비밀-토큰을-여기에-설정"
+$env:GATEWAY_WORKSPACE_ROOTS = "C:\\Work\\Projects"
+npm install
+npm run dev
+```
+
+기본 주소는 `127.0.0.1:8787`이다. Tailscale 기기에서 사용하려면 `GATEWAY_BIND_HOST`에
+명시적인 Tailscale IPv4 주소(`100.64.0.0/10`)만 설정할 수 있다. `0.0.0.0`이나 공용
+인터페이스 바인딩은 거부한다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `GATEWAY_CLIENT_TOKEN` | 없음, 필수 | 32자 이상 Client Token. 로그·DB·응답에 저장하지 않는다. |
+| `GATEWAY_BIND_HOST` | `127.0.0.1` | loopback 또는 명시적인 Tailscale IPv4 주소 |
+| `GATEWAY_PORT` | `8787` | Gateway HTTP/WebSocket 포트 |
+| `GATEWAY_DATA_DIR` | `data/` | SQLite 상태 저장 경로. Git에 포함하지 않는다. |
+| `GATEWAY_WORKSPACE_ROOTS` | 현재 작업 디렉터리 | 허용 Workspace root 목록. Windows에서는 `;`로 구분 |
+| `CODEX_COMMAND` | `codex` | Codex CLI 실행 파일 |
+| `CODEX_APP_SERVER_ARGS` | `app-server` | Codex App Server 인자 |
+
+## Phase 1 Mobile API
+
+Provider별 프로토콜을 외부에 노출하지 않는, 현재 구현된 Provider 중립적 API다. 모든 HTTP와
+WebSocket handshake에는 `Authorization: Bearer <GATEWAY_CLIENT_TOKEN>` 헤더가 필요하다.
 
 ### REST
 
@@ -373,39 +402,37 @@ POST   /sessions/{sessionId}/resume
 POST   /sessions/{sessionId}/runs
 POST   /sessions/{sessionId}/interrupt
 
-GET    /projects/{projectId}/git/status
-GET    /projects/{projectId}/git/diff
-
-POST   /projects/{projectId}/build
-POST   /projects/{projectId}/test
-
-GET    /approvals
-POST   /approvals/{approvalId}/decision
+GET    /sessions/{sessionId}/events?afterSequence={number}
 ```
+
+`POST /projects`는 `{ "name", "workspacePath" }`를 받고, 경로가 정규화된 허용 root 하위인지
+검증한다. `POST /sessions`는 `{ "providerId": "codex", "projectId" }`,
+`POST /sessions/{sessionId}/runs`는 `{ "text" }`를 받는다. Gateway가 발급하는 `prj_`, `ses_`,
+`run_`, `evt_` ID만 외부에 반환하며 Codex Thread/Turn ID는 노출하지 않는다.
+
+오류는 `{ "error": { "code", "message" } }` 형태다. 잘못된 입력은 `400`, 인증 실패는 `401`,
+허용되지 않은 Workspace는 `403`, 리소스 없음은 `404`, 상태 충돌은 `409`, Provider 시작/통신 실패는
+`503`으로 반환한다. 오류에는 Token, App Server 원문 오류, 개인 경로 또는 명령 인자가 포함되지 않는다.
 
 ### WebSocket
 
 ```text
-WS /events
+WS /events?sessionId={optional}&afterSequence={optional}
 ```
 
 주요 이벤트:
 
 ```text
-agent.status
-session.started
-run.started
-agent.message.delta
-command.started
-command.completed
-file.change
-approval.requested
-approval.resolved
-run.completed
-build.output
-test.output
-error
+agent.status, session.started, run.started, agent.message.delta, run.completed, error
 ```
+
+이벤트 envelope는 `eventId`, `sequence`, `type`, `occurredAt`, `providerId`, `projectId`,
+`sessionId`, 선택적 `runId`, `payload`를 포함한다. 하나의 Session 내 sequence는 증가 순서로
+보존된다. 연결 시 `afterSequence` 이후의 보존 이벤트를 먼저 재전송한 뒤 실시간 이벤트를 보낸다.
+Session별 최근 1,000개 및 7일 이내 이벤트만 보존하므로 범위 밖이면 Session/Run 상태를 다시 조회해야 한다.
+
+Phase 1은 Approval 결정을 지원하지 않는다. Provider에서 승인 요청을 받으면 절대 자동 승인하지 않고,
+`agent.status: WaitingApproval` 및 안전한 `error` 이벤트로 해당 Run을 실패 처리한다.
 
 ---
 

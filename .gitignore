@@ -1,11 +1,9 @@
-# 개인별 에이전트 지침과 로컬 운영 정보
-.agents/local/
-.agents/**/*.local.md
-
-# 환경 변수와 비밀값
+node_modules/
+dist/
+data/
 .env
 .env.*
-!.env.example
-
-# 로컬 Gateway 영속 데이터
-data/
+coverage/
+*.db
+*.db-shm
+*.db-wal

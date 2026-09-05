@@ -26,3 +26,13 @@ MVP의 대표 이벤트는 `agent.status`, `session.started`, `run.started`,
 2. 모바일 클라이언트 호환성과 재연결 동작을 검토한다.
 3. README 및 이 문서의 관련 설명을 갱신한다.
 4. 정상·잘못된 입력·권한 거부·재시도 경로를 테스트한다.
+
+## Phase 1 구현 계약
+
+- HTTP와 WebSocket handshake는 같은 Bearer Client Token 검증을 통과해야 한다. `/health`도 예외가 아니다.
+- Gateway ID는 `prj_`, `ses_`, `run_`, `evt_` 접두사를 쓰며 Codex Thread/Turn 원본 ID는 외부 응답과
+  이벤트에 포함하지 않는다.
+- `WS /events`와 `GET /sessions/{sessionId}/events`는 선택적 `afterSequence` 이후의 이벤트를 오름차순으로
+  반환한다. Session별 최근 1,000개 또는 7일을 넘는 이벤트는 재전송하지 않으며, 클라이언트는 상태를 재조회한다.
+- Phase 1은 `agent.status`, `session.started`, `run.started`, `agent.message.delta`, `run.completed`, `error`
+  만 발행한다. Approval·Git·Build/Test 이벤트는 다음 Phase의 계약이다.

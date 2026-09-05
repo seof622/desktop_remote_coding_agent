@@ -208,3 +208,21 @@ CodexProvider가 Session 재개를 지원하면 `thread/resume`로 상태를 확
 [ADR 0002](../../.agents/decisions/0002-phase-1-technical-baseline.md)에서 확정했다.
 
 Codex CLI/App Server의 정확한 최소 버전은 첫 실제 통합 구현에서 호환성 검증 후 pin한다.
+
+## Implementation record (2026-09-05)
+
+- [x] Fastify HTTP/WebSocket Gateway, Bearer Token 인증, loopback/Tailscale bind 검증, SQLite 상태 저장을 구현했다.
+- [x] Project Workspace 정규화·허용 root 검증, Gateway ID 매핑, 단일 활성 Run 상태 전이를 구현했다.
+- [x] Codex stdio JSON-RPC lifecycle (`initialize`, `initialized`, Thread/Turn, interrupt)과 최소 이벤트 정규화를 구현했다.
+- [x] HTTP 인증, 허용 root 탈출, ID 매핑, 단일 활성 Run, Approval 자동 승인 방지를 자동 테스트로 검증했다.
+- [x] `codex-cli 0.153.0`에서 App Server schema 생성 및 `initialize` → `initialized` → `thread/start` 실제 lifecycle을 검증했다.
+- [ ] 실제 Run/interrupt와 Tailscale 실기기 연결은 별도 수동 검증이 필요하다.
+
+### API change checklist
+
+- [x] REST endpoint와 WebSocket event envelope를 README 및 `.agents/api-contracts.md`에 명시했다.
+- [x] 새 Gateway API이므로 기존 모바일 클라이언트 호환성 영향이 없다.
+- [x] 인증, 입력 검증, Workspace 소속 검증을 적용했다.
+- [x] sequence 기반 순서·중복 방지와 보존 범위 밖 재조회 동작을 정의했다.
+- [x] 외부 오류에 Token, Provider 원문 오류, 개인 경로·명령을 노출하지 않는다.
+- [x] 정상, 입력/권한 실패, 상태 충돌, Approval 거절 흐름을 테스트했다.
