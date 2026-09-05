@@ -145,6 +145,8 @@ describe("HTTP boundary", () => {
     expect(response.headers["referrer-policy"]).toBe("no-referrer");
     expect(response.headers["content-security-policy"]).toContain("default-src 'self'");
     expect(response.body).toContain("Gateway 테스트 대시보드");
+    expect(response.body).toContain("Codex 답변");
+    expect(response.body).toContain("agent.message.delta");
     expect(response.body).not.toContain(token);
     await app.close();
     store.close();

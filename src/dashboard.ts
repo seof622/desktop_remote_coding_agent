@@ -9,7 +9,8 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     * { box-sizing:border-box; } body { margin:0; background:linear-gradient(145deg,#06101f,#0b1d32); color:var(--text); font:16px system-ui,-apple-system,"Segoe UI",sans-serif; }
     main { max-width:840px; margin:auto; padding:20px 14px 48px; } h1 { margin:0 0 6px; font-size:24px; } h2 { font-size:17px; margin:0 0 12px; } p,small { color:var(--muted); } .card { background:rgba(14,32,53,.94); border:1px solid var(--line); border-radius:14px; padding:16px; margin:14px 0; box-shadow:0 12px 30px rgba(0,0,0,.18); }
     .row { display:flex; gap:9px; align-items:center; flex-wrap:wrap; } .row > * { flex:1 1 160px; } input,textarea,select,button { border-radius:9px; border:1px solid #396183; background:#09192a; color:var(--text); font:inherit; padding:10px; width:100%; } textarea { min-height:100px; resize:vertical; } button { cursor:pointer; background:#1669c3; border-color:#398fe9; font-weight:650; } button.secondary { background:#16324e; } button.danger { background:#8c2435; border-color:#c94659; } button:disabled { opacity:.5; cursor:not-allowed; }
-    #status { font-size:14px; color:var(--muted); } #status.ok { color:var(--green); } #status.error { color:var(--red); } .list { display:grid; gap:8px; } .item { border:1px solid #294967; background:#09192a; padding:10px; border-radius:9px; text-align:left; } .item.selected { outline:2px solid var(--blue); } .item strong,.item small { display:block; overflow-wrap:anywhere; } #events { min-height:170px; max-height:360px; overflow:auto; white-space:pre-wrap; background:#050c15; border-radius:9px; padding:10px; font:12px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    #status { font-size:14px; color:var(--muted); } #status.ok { color:var(--green); } #status.error { color:var(--red); } .list { display:grid; gap:8px; } .item { border:1px solid #294967; background:#09192a; padding:10px; border-radius:9px; text-align:left; } .item.selected { outline:2px solid var(--blue); } .item strong,.item small { display:block; overflow-wrap:anywhere; } #events { min-height:170px; max-height:460px; overflow:auto; background:#050c15; border-radius:9px; padding:10px; display:grid; gap:10px; align-content:start; }
+    .event-line { color:var(--muted); border-bottom:1px solid #142436; padding:2px 3px 8px; overflow-wrap:anywhere; font:12px ui-monospace,SFMono-Regular,Consolas,monospace; } .answer { border:1px solid #28567d; border-left:4px solid var(--blue); background:#0a1b2d; border-radius:10px; padding:12px; } .answer-head { display:flex; justify-content:space-between; gap:12px; color:#8fc8ff; font-size:13px; margin-bottom:8px; } .answer-status { color:var(--green); white-space:nowrap; } .answer-text { margin:0; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; font:15px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; }
     .hint { font-size:13px; margin:8px 0 0; } .hidden { display:none; }
   </style>
 </head>
@@ -46,16 +47,40 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
   </section>
 
   <section class="card">
-    <h2>실시간 이벤트</h2>
+    <h2>답변 및 실시간 이벤트</h2>
     <div id="events" aria-live="polite">대기 중…</div>
   </section>
 </main>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { token: "", projectId: "", sessionId: "", sequence: 0, socket: null };
+  const state = { token: "", projectId: "", sessionId: "", sequence: 0, socket: null, answers: new Map() };
   const status = (message, kind = "") => { const target = $("status"); target.textContent = message; target.className = kind; };
-  const log = (type, payload) => { const line = document.createElement("div"); line.textContent = new Date().toLocaleTimeString() + "  " + type + "  " + JSON.stringify(payload); $("events").prepend(line); };
+  const eventRoot = () => { const root = $("events"); if (root.dataset.active !== "true") { root.replaceChildren(); root.dataset.active = "true"; } return root; };
+  const resetEvents = () => { state.answers.clear(); const root = $("events"); root.replaceChildren(); root.dataset.active = "false"; root.textContent = "선택한 Session의 이벤트 대기 중…"; };
+  const log = (type, payload) => { const line = document.createElement("div"); line.className = "event-line"; line.textContent = new Date().toLocaleTimeString() + "  " + type + "  " + JSON.stringify(payload); eventRoot().prepend(line); };
+  const appendAnswerDelta = (event) => {
+    const runId = event.runId || "unknown-run";
+    let answer = state.answers.get(runId);
+    if (!answer) {
+      const card = document.createElement("article"); card.className = "answer";
+      const head = document.createElement("div"); head.className = "answer-head";
+      const title = document.createElement("strong"); title.textContent = "Codex 답변";
+      const answerStatus = document.createElement("span"); answerStatus.className = "answer-status"; answerStatus.textContent = "작성 중";
+      const text = document.createElement("pre"); text.className = "answer-text";
+      head.append(title, answerStatus); card.append(head, text); eventRoot().prepend(card);
+      answer = { card, status: answerStatus, text }; state.answers.set(runId, answer);
+    }
+    answer.text.textContent += event.payload.delta;
+  };
+  const renderEvent = (event) => {
+    if (event.type === "agent.message.delta" && typeof event.payload?.delta === "string") { appendAnswerDelta(event); return; }
+    if (event.type === "run.completed" && event.runId) {
+      const answer = state.answers.get(event.runId);
+      if (answer) answer.status.textContent = event.payload?.status || "완료";
+    }
+    log(event.type || "event", event.payload || {});
+  };
   const setEnabled = (connected) => { ["refresh","clear-token","add-project"].forEach((id) => $(id).disabled = !connected); $("start-session").disabled = !connected || !state.projectId; $("start-run").disabled = !connected || !state.sessionId; $("interrupt").disabled = !connected || !state.sessionId; };
   const headers = () => ({ "Authorization": "Bearer " + state.token, "Content-Type": "application/json" });
   const api = async (path, options = {}) => { const response = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error((body.error && body.error.message) || "요청에 실패했습니다."); return body; };
@@ -72,18 +97,18 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     const socket = new WebSocket(scheme + "//" + location.host + "/events" + suffix, [protocol]);
     state.socket = socket;
     socket.onopen = () => status("연결됨 · 실시간 이벤트 수신 중", "ok");
-    socket.onmessage = (message) => { const event = JSON.parse(message.data); if (event.sequence) state.sequence = Math.max(state.sequence, event.sequence); log(event.type || "event", event.payload || {}); };
+    socket.onmessage = (message) => { const event = JSON.parse(message.data); if (event.sequence) state.sequence = Math.max(state.sequence, event.sequence); renderEvent(event); };
     socket.onerror = () => status("실시간 연결 오류", "error");
     socket.onclose = () => { if (state.token) status("실시간 연결이 종료되었습니다. 목록 새로고침으로 다시 연결하세요.", "error"); };
   };
   const renderProjects = (projects) => { const root = $("projects"); root.replaceChildren(); projects.forEach((project) => { const button = document.createElement("button"); button.className = "item" + (project.id === state.projectId ? " selected" : ""); const title = document.createElement("strong"); title.textContent = project.name; const detail = document.createElement("small"); detail.textContent = project.workspacePath; button.append(title, detail); button.onclick = () => { state.projectId = project.id; renderProjects(projects); setEnabled(true); }; root.append(button); }); };
-  const renderSessions = (sessions) => { const root = $("sessions"); root.replaceChildren(); sessions.forEach((session) => { const button = document.createElement("button"); button.className = "item" + (session.id === state.sessionId ? " selected" : ""); const title = document.createElement("strong"); title.textContent = session.status + " · " + session.id; const detail = document.createElement("small"); detail.textContent = "Project: " + session.projectId; button.append(title, detail); button.onclick = () => { state.sessionId = session.id; state.sequence = 0; setEnabled(true); renderSessions(sessions); connectEvents(); }; root.append(button); }); };
+  const renderSessions = (sessions) => { const root = $("sessions"); root.replaceChildren(); sessions.forEach((session) => { const button = document.createElement("button"); button.className = "item" + (session.id === state.sessionId ? " selected" : ""); const title = document.createElement("strong"); title.textContent = session.status + " · " + session.id; const detail = document.createElement("small"); detail.textContent = "Project: " + session.projectId; button.append(title, detail); button.onclick = () => { const changed = state.sessionId !== session.id; state.sessionId = session.id; state.sequence = changed ? 0 : state.sequence; if (changed) resetEvents(); setEnabled(true); renderSessions(sessions); connectEvents(); }; root.append(button); }); };
   const refresh = async () => { const [health, providers, projects, sessions] = await Promise.all([api("/health"), api("/providers"), api("/projects"), api("/sessions")]); renderProjects(projects); renderSessions(sessions); log("gateway.ready", { status: health.status, providers: providers.map((item) => item.providerId) }); setEnabled(true); };
   $("connect").onclick = async () => { const token = $("token").value.trim(); if (!token) return status("Token을 입력하세요.", "error"); state.token = token; try { await refresh(); connectEvents(); } catch (error) { state.token = ""; setEnabled(false); status(error.message || "인증에 실패했습니다.", "error"); } };
   $("clear-token").onclick = () => { state.token = ""; $("token").value = ""; closeSocket(); setEnabled(false); status("Token을 지웠습니다."); };
   $("refresh").onclick = async () => { try { await refresh(); connectEvents(); } catch (error) { status(error.message || "새로고침에 실패했습니다.", "error"); } };
   $("add-project").onclick = async () => { try { const project = await api("/projects", { method: "POST", body: JSON.stringify({ name: $("project-name").value.trim(), workspacePath: $("workspace-path").value.trim() }) }); state.projectId = project.id; await refresh(); } catch (error) { status(error.message || "프로젝트 등록에 실패했습니다.", "error"); } };
-  $("start-session").onclick = async () => { try { const session = await api("/sessions", { method: "POST", body: JSON.stringify({ providerId: "codex", projectId: state.projectId }) }); state.sessionId = session.id; state.sequence = 0; await refresh(); connectEvents(); } catch (error) { status(error.message || "Session 시작에 실패했습니다.", "error"); } };
+  $("start-session").onclick = async () => { try { const session = await api("/sessions", { method: "POST", body: JSON.stringify({ providerId: "codex", projectId: state.projectId }) }); state.sessionId = session.id; state.sequence = 0; resetEvents(); await refresh(); connectEvents(); } catch (error) { status(error.message || "Session 시작에 실패했습니다.", "error"); } };
   $("start-run").onclick = async () => { try { await api("/sessions/" + state.sessionId + "/runs", { method: "POST", body: JSON.stringify({ text: $("prompt").value.trim() }) }); $("prompt").value = ""; } catch (error) { status(error.message || "작업 시작에 실패했습니다.", "error"); } };
   $("interrupt").onclick = async () => { try { await api("/sessions/" + state.sessionId + "/interrupt", { method: "POST", body: "{}" }); } catch (error) { status(error.message || "작업 중단에 실패했습니다.", "error"); } };
   window.addEventListener("beforeunload", closeSocket); setEnabled(false);

@@ -11,7 +11,7 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 
 - `GET /dashboard`에서 데이터가 없는 정적 HTML/CSS/JS 대시보드 제공
 - Token 입력 후 Health, Provider, Project, Session, Run, interrupt API 제어
-- 정규화된 Gateway Event를 실시간 표시
+- 정규화된 Gateway Event를 실시간 표시하고 `agent.message.delta`를 Run별 답변으로 누적
 - 브라우저 WebSocket의 제약을 위해 `Sec-WebSocket-Protocol: gateway-v1.<token>` 인증 지원
 
 ### Non-goals
@@ -32,6 +32,7 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - Token은 JavaScript 메모리에만 두며 새로고침·페이지 닫기 시 사라진다.
 - REST 실패와 WebSocket close/error는 안전한 메시지로 화면에 표시한다.
 - 선택 Session의 마지막 sequence를 메모리에 보존하고 재연결 시 `afterSequence`로 이어받는다.
+- 동일 Run의 메시지 delta는 하나의 답변 카드에 누적하고, Session을 바꾸면 기존 답변 표시를 분리한다.
 - Run은 기존 Gateway 상태 전이와 단일 활성 Run 제약을 그대로 따른다.
 
 ## Security and approval considerations
