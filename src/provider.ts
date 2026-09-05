@@ -77,7 +77,9 @@ class JsonRpcProcess extends EventEmitter {
     const child = this.process;
     if (!child) return;
     this.process = undefined;
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.kill();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))]);
   }
 
   private consume(chunk: string): void {
@@ -167,23 +169,46 @@ export class CodexProvider implements AgentProvider {
   }
   async interruptRun(providerSessionId: string, providerRunId: string): Promise<void> {
     await this.initialize();
-    await this.rpc.request("turn/interrupt", { threadId: providerSessionId, turnId: providerRunId });
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        await this.rpc.request("turn/interrupt", { threadId: providerSessionId, turnId: providerRunId });
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.includes("no active turn") || attempt === 7) throw error;
+        // Codex can acknowledge turn/start shortly before the turn becomes interruptible.
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
   }
   onEvent(listener: (event: ProviderEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   async close(): Promise<void> { this.closing = true; await this.rpc.close(); }
 
   private async initialize(): Promise<void> {
     if (!this.initialization) {
-      this.initialization = (async () => {
-        await this.rpc.start();
-        await this.rpc.request("initialize", { clientInfo: { name: "desktop-gateway-agent", version: "0.1.0" } });
-        this.rpc.notify("initialized");
-      })().catch((error: unknown) => {
+      this.initialization = this.initializeWithRetry().catch((error: unknown) => {
         this.initialization = undefined;
         throw error;
       });
     }
     await this.initialization;
+  }
+
+  private async initializeWithRetry(): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.rpc.start();
+        await this.rpc.request("initialize", { clientInfo: { name: "desktop-gateway-agent", version: "0.1.0" } });
+        this.rpc.notify("initialized");
+        return;
+      } catch (error) {
+        lastError = error;
+        await this.rpc.close();
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    throw lastError;
   }
 
   private handleNotification(method: string, value: unknown): void {

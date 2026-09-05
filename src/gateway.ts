@@ -4,6 +4,16 @@ import type { AgentProvider } from "./provider.js";
 import { GatewayStore } from "./store.js";
 import type { AgentEvent, AgentRun, AgentSession, Project, ProviderEvent, RunStatus } from "./types.js";
 
+function safeProviderFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown provider error.";
+  return message
+    .replace(/((?:authorization|token|api[_-]?key)\s*[=:])\s*\S+/gi, "$1 <redacted>")
+    .replace(/Bearer\s+\S+/gi, "Bearer <redacted>")
+    .replace(/[A-Za-z]:\\[^\s\"']+/g, "<path>")
+    .replace(/\/(?:Users|home)\/[^\s\"']+/g, "<path>")
+    .slice(0, 300);
+}
+
 export class GatewayService {
   readonly events = new EventHub();
 
@@ -21,7 +31,13 @@ export class GatewayService {
 
   async startSession(projectId: string): Promise<AgentSession> {
     const project = this.store.getProject(projectId);
-    const providerSessionId = await this.provider.startSession(project.workspacePath);
+    let providerSessionId: string;
+    try {
+      providerSessionId = await this.provider.startSession(project.workspacePath);
+    } catch (error) {
+      console.error(`[Gateway] Codex Session start failed: ${safeProviderFailure(error)}`);
+      throw new GatewayError(503, "PROVIDER_UNAVAILABLE", "Codex App Server could not start the session.");
+    }
     const session = this.store.createSession(project.id, providerSessionId);
     this.publish({ type: "session.started", projectId: project.id, sessionId: session.id, payload: { status: session.status } });
     return session;

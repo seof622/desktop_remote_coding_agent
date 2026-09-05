@@ -216,7 +216,9 @@ Codex CLI/App Server의 정확한 최소 버전은 첫 실제 통합 구현에�
 - [x] Codex stdio JSON-RPC lifecycle (`initialize`, `initialized`, Thread/Turn, interrupt)과 최소 이벤트 정규화를 구현했다.
 - [x] HTTP 인증, 허용 root 탈출, ID 매핑, 단일 활성 Run, Approval 자동 승인 방지를 자동 테스트로 검증했다.
 - [x] `codex-cli 0.153.0`에서 App Server schema 생성 및 `initialize` → `initialized` → `thread/start` 실제 lifecycle을 검증했다.
-- [ ] 실제 Run/interrupt와 Tailscale 실기기 연결은 별도 수동 검증이 필요하다.
+- [x] 실제 HTTP Run, 메시지 delta·완료 이벤트 보존, WebSocket broadcast, `turn/interrupt` → `Interrupted` 완료를 검증했다. 검증 프롬프트는 tool·파일 변경을 금지했다.
+- [x] Tailscale 1.102.3을 설치하고 Tailnet IPv4에 Gateway를 바인딩한 뒤, 인증된 `/health` 요청을 검증했다.
+- [ ] 현재 Tailnet에 다른 피어가 없어 스마트폰 등 원격 기기의 실제 WebSocket 연결 검증은 해당 기기 연결 후 진행한다.
 
 ### API change checklist
 

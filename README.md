@@ -363,6 +363,17 @@ npm install
 npm run dev
 ```
 
+Windows에서 Gateway 터미널에 `spawn codex ENOENT`가 표시되면, Node 프로세스가 Codex 실행 파일을
+PATH에서 찾지 못한 것이다. 같은 PowerShell에서 `CODEX_COMMAND`를 설치된 실행 파일로 명시한 뒤 Gateway를
+다시 시작한다.
+
+```powershell
+$env:CODEX_COMMAND = (Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter codex.exe |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 -ExpandProperty FullName)
+npm run dev
+```
+
 기본 주소는 `127.0.0.1:8787`이다. Tailscale 기기에서 사용하려면 `GATEWAY_BIND_HOST`에
 명시적인 Tailscale IPv4 주소(`100.64.0.0/10`)만 설정할 수 있다. `0.0.0.0`이나 공용
 인터페이스 바인딩은 거부한다.
@@ -379,13 +390,25 @@ npm run dev
 
 ## Phase 1 Mobile API
 
-Provider별 프로토콜을 외부에 노출하지 않는, 현재 구현된 Provider 중립적 API다. 모든 HTTP와
-WebSocket handshake에는 `Authorization: Bearer <GATEWAY_CLIENT_TOKEN>` 헤더가 필요하다.
+Provider별 프로토콜을 외부에 노출하지 않는, 현재 구현된 Provider 중립적 API다. `GET /dashboard`는
+Token·Project·Session 데이터를 포함하지 않는 공개 정적 테스트 화면이다. 그 외 모든 HTTP API에는
+`Authorization: Bearer <GATEWAY_CLIENT_TOKEN>` 헤더가 필요하다.
+
+### 스마트폰 브라우저 테스트
+
+Tailscale에 연결된 스마트폰에서 `http://<Gateway-Tailscale-IP>:8787/dashboard`를 열고 Token을 직접
+입력하면, Project 등록·Codex Session/Run 시작·interrupt·이벤트 수신을 테스트할 수 있다. Token은 해당
+페이지의 메모리에만 존재하며 새로고침하거나 닫으면 삭제된다.
+
+Dashboard의 REST 요청은 Bearer 인증을 사용한다. 브라우저 WebSocket은 임의 `Authorization` 헤더를 설정할 수
+없으므로 `Sec-WebSocket-Protocol: gateway-v1.<base64url(Client Token)>`으로 인증한다. Token을 URL이나
+브라우저 저장소에 넣지 않는다. 이 화면은 검증용이며 Approval, Git, Build/Test 제어는 지원하지 않는다.
 
 ### REST
 
 ```text
 GET    /health
+GET    /dashboard                 # 공개 정적 테스트 화면, 데이터 없음
 
 GET    /projects
 POST   /projects

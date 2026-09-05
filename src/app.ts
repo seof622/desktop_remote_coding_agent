@@ -3,8 +3,10 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import websocket from "@fastify/websocket";
 import { z } from "zod";
 import type { GatewayConfig } from "./config.js";
+import { DASHBOARD_HTML } from "./dashboard.js";
 import { GatewayError } from "./errors.js";
 import type { GatewayService } from "./gateway.js";
+import type { AgentRun, AgentSession } from "./types.js";
 import { validateWorkspacePath } from "./workspace.js";
 
 const projectParams = z.object({ id: z.string().regex(/^prj_[a-f0-9]{32}$/) });
@@ -21,12 +23,49 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
-function isAuthorized(request: FastifyRequest, token: string): boolean {
+function bearerToken(request: FastifyRequest): string | undefined {
   const authorization = request.headers.authorization;
-  if (!authorization?.startsWith("Bearer ")) return false;
-  const supplied = Buffer.from(authorization.slice(7));
+  return authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+}
+
+function webSocketProtocolToken(request: FastifyRequest): string | undefined {
+  if (request.headers.upgrade?.toLowerCase() !== "websocket") return undefined;
+  const header = request.headers["sec-websocket-protocol"];
+  const protocols = (Array.isArray(header) ? header.join(",") : header ?? "").split(",");
+  for (const protocol of protocols) {
+    const encoded = protocol.trim().match(/^gateway-v1\.([A-Za-z0-9_-]+)$/)?.[1];
+    if (!encoded) continue;
+    try {
+      return Buffer.from(encoded, "base64url").toString("utf8");
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function isAuthorized(request: FastifyRequest, token: string): boolean {
+  const candidate = bearerToken(request) ?? webSocketProtocolToken(request);
+  if (!candidate) return false;
+  const supplied = Buffer.from(candidate);
   const expected = Buffer.from(token);
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+function safeErrorKind(error: unknown): string {
+  if (!(error instanceof Error)) return "UnknownError";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : error.name;
+}
+
+function mobileSession(session: AgentSession): Omit<AgentSession, "providerSessionId"> {
+  const { providerSessionId: _providerSessionId, ...publicSession } = session;
+  return publicSession;
+}
+
+function mobileRun(run: AgentRun): Omit<AgentRun, "providerRunId"> {
+  const { providerRunId: _providerRunId, ...publicRun } = run;
+  return publicRun;
 }
 
 export interface AppDependencies { config: GatewayConfig; gateway: GatewayService }
@@ -36,17 +75,26 @@ export async function buildApp({ config, gateway }: AppDependencies): Promise<Fa
   await app.register(websocket);
 
   app.addHook("onRequest", async (request, reply) => {
+    if (request.method === "GET" && request.url.split("?", 1)[0] === "/dashboard") return;
     if (!isAuthorized(request, config.clientToken)) {
       return reply.code(401).send({ error: { code: "UNAUTHORIZED", message: "Authentication is required." } });
     }
   });
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof GatewayError) {
       return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
     }
+    console.error(`[Gateway] ${request.method} ${request.routeOptions.url ?? "unknown-route"} failed: ${safeErrorKind(error)}`);
     return reply.code(500).send({ error: { code: "INTERNAL_ERROR", message: "The Gateway could not process this request." } });
   });
 
+  app.get("/dashboard", async (_request, reply) => reply
+    .header("cache-control", "no-store")
+    .header("content-security-policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+    .header("referrer-policy", "no-referrer")
+    .header("x-content-type-options", "nosniff")
+    .type("text/html; charset=utf-8")
+    .send(DASHBOARD_HTML));
   app.get("/health", async () => ({ status: "Online" }));
   app.get("/providers", async () => ([{ providerId: "codex", capabilities: gateway.getCapabilities() }]));
   app.get("/providers/:id/capabilities", async (request) => {
@@ -63,14 +111,14 @@ export async function buildApp({ config, gateway }: AppDependencies): Promise<Fa
   });
   app.get("/projects/:id", async (request) => gateway.getProject(parse(projectParams, request.params).id));
 
-  app.get("/sessions", async () => gateway.listSessions());
+  app.get("/sessions", async () => gateway.listSessions().map(mobileSession));
   app.post("/sessions", async (request, reply) => {
     const body = parse(sessionBody, request.body);
     const session = await gateway.startSession(body.projectId);
-    return reply.code(201).send(session);
+    return reply.code(201).send(mobileSession(session));
   });
-  app.get("/sessions/:sessionId", async (request) => gateway.getSession(parse(sessionParams, request.params).sessionId));
-  app.post("/sessions/:sessionId/resume", async (request) => gateway.resumeSession(parse(sessionParams, request.params).sessionId));
+  app.get("/sessions/:sessionId", async (request) => mobileSession(gateway.getSession(parse(sessionParams, request.params).sessionId)));
+  app.post("/sessions/:sessionId/resume", async (request) => mobileSession(await gateway.resumeSession(parse(sessionParams, request.params).sessionId)));
   app.get("/sessions/:sessionId/events", async (request) => {
     const params = parse(sessionParams, request.params);
     const query = parse(z.object({ afterSequence: z.coerce.number().int().min(0).default(0) }), request.query);
@@ -80,23 +128,26 @@ export async function buildApp({ config, gateway }: AppDependencies): Promise<Fa
     const sessionId = parse(sessionParams, request.params).sessionId;
     const body = parse(runBody, request.body);
     const run = await gateway.startRun(sessionId, body.text);
-    return reply.code(201).send(run);
+    return reply.code(201).send(mobileRun(run));
   });
-  app.post("/sessions/:sessionId/interrupt", async (request) => gateway.interrupt(parse(sessionParams, request.params).sessionId));
+  app.post("/sessions/:sessionId/interrupt", async (request) => mobileRun(await gateway.interrupt(parse(sessionParams, request.params).sessionId)));
 
   app.get("/events", { websocket: true }, (connection, request) => {
     const query = parse(eventsQuery, request.query);
+    let unsubscribe: () => void = () => undefined;
     const send = (event: unknown) => {
-      if (connection.socket.readyState === 1) connection.socket.send(JSON.stringify(event));
+      try {
+        if (connection.readyState === 1) connection.send(JSON.stringify(event));
+      } catch { unsubscribe(); }
     };
     if (query.sessionId) {
       for (const event of gateway.listEvents(query.sessionId, query.afterSequence ?? 0)) send(event);
     }
-    const unsubscribe = gateway.events.subscribe((event) => {
+    unsubscribe = gateway.events.subscribe((event) => {
       if (!query.sessionId || query.sessionId === event.sessionId) send(event);
     });
-    connection.socket.on("close", unsubscribe);
-    connection.socket.on("error", unsubscribe);
+    connection.on("close", unsubscribe);
+    connection.on("error", unsubscribe);
   });
 
   return app;

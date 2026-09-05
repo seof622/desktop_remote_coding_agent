@@ -29,7 +29,12 @@ MVP의 대표 이벤트는 `agent.status`, `session.started`, `run.started`,
 
 ## Phase 1 구현 계약
 
-- HTTP와 WebSocket handshake는 같은 Bearer Client Token 검증을 통과해야 한다. `/health`도 예외가 아니다.
+- `/dashboard`는 Token·Project·Session 데이터를 포함하지 않는 공개 정적 테스트 페이지다. 그 외 모든 HTTP API
+  (예: `/health`)와 WebSocket handshake는 Client Token 검증을 통과해야 한다.
+- 일반 HTTP와 비브라우저 WebSocket은 `Authorization: Bearer <Client Token>`을 사용한다. 브라우저 대시보드가
+  WebSocket 임의 헤더를 설정할 수 없는 제약에 한해, Upgrade 요청의 `Sec-WebSocket-Protocol`에
+  `gateway-v1.<base64url(Client Token)>`를 보내는 방식을 지원한다. URL query·저장소·이벤트에는 Token을 넣지
+  않으며 기존 Bearer WebSocket 클라이언트는 그대로 호환된다.
 - Gateway ID는 `prj_`, `ses_`, `run_`, `evt_` 접두사를 쓰며 Codex Thread/Turn 원본 ID는 외부 응답과
   이벤트에 포함하지 않는다.
 - `WS /events`와 `GET /sessions/{sessionId}/events`는 선택적 `afterSequence` 이후의 이벤트를 오름차순으로
