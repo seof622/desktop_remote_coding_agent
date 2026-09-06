@@ -63,4 +63,6 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - [x] sequence 기반 이벤트 재연결과 오류 표시 동작을 정의했다.
 - [x] Token을 URL·저장소·로그·오류에 노출하지 않는다.
 - [x] README와 `.agents/` 문서를 구현과 함께 갱신했다.
-- [x] 정상·잘못된 Token WebSocket 인증을 자동 테스트했다. 실제 스마트폰의 재연결 sequence는 수동 검증한다.
+- [x] 정상·잘못된 Token WebSocket 인증을 자동 테스트했다.
+- [x] Tailscale 스마트폰에서 Run 스트리밍과 interrupt를 확인하고, 네트워크 복구 후 페이지의
+  `목록 새로고침`으로 WebSocket을 다시 연결해 `afterSequence` 이후 이벤트가 이어지는 것을 검증했다.
