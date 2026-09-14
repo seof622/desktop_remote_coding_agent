@@ -16,6 +16,7 @@ function safeProviderFailure(error: unknown): string {
 
 export class GatewayService {
   readonly events = new EventHub();
+  private readonly deferredProviderEvents = new Map<string, ProviderEvent[]>();
 
   constructor(private readonly store: GatewayStore, private readonly provider: AgentProvider) {
     provider.onEvent((event) => { void this.handleProviderEvent(event); });
@@ -63,8 +64,10 @@ export class GatewayService {
       const stored = this.store.setRunProviderId(run.id, started.providerRunId);
       const running = this.store.updateRunStatus(stored.id, "Running");
       this.publish({ type: "run.started", projectId: session.projectId, sessionId: session.id, runId: running.id, payload: { status: running.status } });
-      return running;
+      await this.drainDeferredProviderEvents(session.providerSessionId, started.providerRunId);
+      return this.store.getRun(running.id);
     } catch {
+      await this.rejectDeferredApprovals(session.providerSessionId);
       const failed = this.store.updateRunStatus(run.id, "Failed");
       this.publish({ type: "error", projectId: session.projectId, sessionId: session.id, runId: failed.id, payload: { code: "PROVIDER_UNAVAILABLE", message: "Codex App Server could not start the run." } });
       throw new GatewayError(503, "PROVIDER_UNAVAILABLE", "Codex App Server could not start the run.");
@@ -98,6 +101,15 @@ export class GatewayService {
     const session = this.store.findSessionByProviderId(event.providerSessionId);
     if (!session) return;
     const run = event.providerRunId ? this.store.findRunByProviderId(event.providerRunId) : this.store.listRuns(session.id).find((item) => ["Queued", "Running", "Interrupting"].includes(item.status));
+    if (!run && event.providerRunId) {
+      const startingRun = this.store.listRuns(session.id).find((item) => item.status === "Queued" && item.providerRunId === null);
+      if (startingRun) {
+        const deferred = this.deferredProviderEvents.get(event.providerSessionId) ?? [];
+        deferred.push(event);
+        this.deferredProviderEvents.set(event.providerSessionId, deferred);
+      }
+      return;
+    }
     if (event.type === "messageDelta" && run && event.text) {
       this.publish({ type: "agent.message.delta", projectId: session.projectId, sessionId: session.id, runId: run.id, payload: { delta: event.text } });
       return;
@@ -111,10 +123,39 @@ export class GatewayService {
     }
     if (event.type === "approvalRequested" && run) {
       this.publish({ type: "agent.status", projectId: session.projectId, sessionId: session.id, runId: run.id, payload: { status: "WaitingApproval" } });
+      try {
+        await this.provider.rejectApproval(event.approval.binding);
+      } catch {
+        // The run still fails closed if the Provider request was already resolved or the connection was lost.
+      }
       await this.failRun(session, run, "APPROVAL_UNSUPPORTED", "Approval is not supported in Phase 1.");
       return;
     }
     if (event.type === "providerError" && run) await this.failRun(session, run, "PROVIDER_ERROR", event.message ?? "Codex App Server reported an error.");
+  }
+
+  private async drainDeferredProviderEvents(providerSessionId: string, providerRunId: string): Promise<void> {
+    const deferred = this.takeDeferredProviderEvents(providerSessionId);
+    for (const event of deferred) {
+      if (event.providerRunId === providerRunId) {
+        await this.handleProviderEvent(event);
+      } else if (event.type === "approvalRequested") {
+        try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
+      }
+    }
+  }
+
+  private async rejectDeferredApprovals(providerSessionId: string): Promise<void> {
+    for (const event of this.takeDeferredProviderEvents(providerSessionId)) {
+      if (event.type !== "approvalRequested") continue;
+      try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
+    }
+  }
+
+  private takeDeferredProviderEvents(providerSessionId: string): ProviderEvent[] {
+    const deferred = this.deferredProviderEvents.get(providerSessionId) ?? [];
+    this.deferredProviderEvents.delete(providerSessionId);
+    return deferred;
   }
 
   private async failRun(session: AgentSession, run: AgentRun, code: string, message: string): Promise<void> {

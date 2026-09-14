@@ -9,7 +9,7 @@ import { GatewayService } from "../src/gateway.js";
 import { EventHub } from "../src/events.js";
 import type { AgentProvider, StartRunResult } from "../src/provider.js";
 import { GatewayStore } from "../src/store.js";
-import type { ProviderCapabilities, ProviderEvent } from "../src/types.js";
+import type { ApprovalDecision, ProviderApprovalBinding, ProviderCapabilities, ProviderEvent } from "../src/types.js";
 
 class FakeProvider implements AgentProvider {
   readonly id = "codex" as const;
@@ -19,6 +19,7 @@ class FakeProvider implements AgentProvider {
   };
   private listeners = new Set<(event: ProviderEvent) => void>();
   startSessionFailure?: Error;
+  rejectedApprovals: ProviderApprovalBinding[] = [];
   async startSession(): Promise<string> {
     if (this.startSessionFailure) throw this.startSessionFailure;
     return "thread_fake";
@@ -26,6 +27,8 @@ class FakeProvider implements AgentProvider {
   async resumeSession(): Promise<void> {}
   async startRun(): Promise<StartRunResult> { return { providerRunId: "turn_fake" }; }
   async interruptRun(): Promise<void> {}
+  async respondToApproval(_binding: ProviderApprovalBinding, _decision: ApprovalDecision): Promise<void> {}
+  async rejectApproval(binding: ProviderApprovalBinding): Promise<void> { this.rejectedApprovals.push(binding); }
   onEvent(listener: (event: ProviderEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   async close(): Promise<void> {}
   emit(event: ProviderEvent): void { for (const listener of this.listeners) listener(event); }
@@ -113,9 +116,26 @@ describe("GatewayService", () => {
     const project = gateway.createProject("workspace", process.cwd());
     const session = await gateway.startSession(project.id);
     const run = await gateway.startRun(session.id, "needs approval");
-    provider.emit({ type: "approvalRequested", providerSessionId: "thread_fake", providerRunId: "turn_fake" });
+    provider.emit({
+      type: "approvalRequested",
+      providerSessionId: "thread_fake",
+      providerRunId: "turn_fake",
+      approval: {
+        type: "command",
+        binding: {
+          providerRequestId: "request_fake",
+          connectionGeneration: 1,
+          providerSessionId: "thread_fake",
+          providerRunId: "turn_fake",
+          providerItemId: "item_fake",
+        },
+        availableDecisions: ["accept", "decline", "cancel"],
+        details: { type: "command", kind: "command", command: "test" },
+      },
+    });
     await new Promise((resolve) => setImmediate(resolve));
     expect(store.getRun(run.id).status).toBe("Failed");
+    expect(provider.rejectedApprovals).toHaveLength(1);
     expect(gateway.listEvents(session.id).at(-1)?.payload).toMatchObject({ code: "APPROVAL_UNSUPPORTED" });
     store.close();
   });

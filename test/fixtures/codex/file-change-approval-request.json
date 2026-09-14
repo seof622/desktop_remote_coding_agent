@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "request_file_fixture",
+  "method": "item/fileChange/requestApproval",
+  "params": {
+    "threadId": "thread_fixture",
+    "turnId": "turn_fixture",
+    "itemId": "item_file_fixture",
+    "startedAtMs": 1788796800000,
+    "grantRoot": "C:\\workspace",
+    "reason": "Apply the requested source changes."
+  }
+}

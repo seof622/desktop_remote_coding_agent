@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "id": "request_permission_fixture",
+  "method": "item/permissions/requestApproval",
+  "params": {
+    "threadId": "thread_fixture",
+    "turnId": "turn_fixture",
+    "itemId": "item_permission_fixture",
+    "startedAtMs": 1788796800000,
+    "cwd": "C:\\workspace",
+    "reason": "Read generated files and access the package registry.",
+    "permissions": {
+      "fileSystem": {
+        "entries": [
+          {
+            "access": "read",
+            "path": {
+              "type": "special",
+              "value": {
+                "kind": "project_roots"
+              }
+            }
+          }
+        ]
+      },
+      "network": {
+        "enabled": true
+      }
+    }
+  }
+}

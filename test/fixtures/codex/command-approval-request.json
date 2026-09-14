@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "request_command_fixture",
+  "method": "item/commandExecution/requestApproval",
+  "params": {
+    "threadId": "thread_fixture",
+    "turnId": "turn_fixture",
+    "itemId": "item_command_fixture",
+    "approvalId": "approval_command_fixture",
+    "startedAtMs": 1788796800000,
+    "kind": "command",
+    "command": "npm test",
+    "cwd": "C:\\workspace",
+    "reason": "Run the project tests.",
+    "availableDecisions": [
+      "accept",
+      "acceptForSession",
+      {
+        "acceptWithExecpolicyAmendment": {
+          "execpolicy_amendment": ["npm test"]
+        }
+      },
+      "decline",
+      "cancel"
+    ]
+  }
+}

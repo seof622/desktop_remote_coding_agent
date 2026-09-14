@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "serverRequest/resolved",
+  "params": {
+    "requestId": "request_command_fixture",
+    "threadId": "thread_fixture"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "id": "request_file_fixture",
+  "result": {
+    "decision": "accept"
+  }
+}

@@ -185,6 +185,17 @@ Pending -> Accepted -> Resolved
 
 ## Implementation milestones
 
+현재 진행 상태:
+
+- [x] `codex-cli 0.153.4` 생성 schema를 다시 확인하고 Command, File Change, Permission request/response와
+  `serverRequest/resolved` 계약 fixture를 추가했다.
+- [x] JSON-RPC 성공·오류 response와 App Server 연결 세대 검증, 정확한 승인 method 분기를 구현했다.
+- [x] `turn/start` 응답과 같은 stream chunk에 포함된 승인 요청을 Run ID 매핑 후 처리하도록 이벤트 순서를
+  보정하고 통합 회귀 테스트를 추가했다.
+- [x] Command/File Change의 기본 결정을 adapter에서 검증하고 복합 policy amendment를 제외했다.
+- [ ] 외부 승인 capability 활성화는 저장소·결정 API·수직 슬라이스가 함께 동작하는 시점으로 미룬다.
+  부분 구현을 모바일에 사용 가능한 기능처럼 광고하지 않기 위한 조정이다.
+
 1. **Codex 계약 fixture와 adapter 경계**
    - 지원 버전 schema에서 세 승인 request/response와 resolved notification fixture를 만든다.
    - JSON-RPC server request의 성공 response, 오류 response, connection generation을 구현한다.

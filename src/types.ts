@@ -59,11 +59,32 @@ export interface AgentEvent {
   payload: Record<string, unknown>;
 }
 
-export interface ProviderEvent {
-  type: "messageDelta" | "runCompleted" | "approvalRequested" | "providerError";
+export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+export type ProviderApprovalType = "command" | "fileChange" | "permission";
+export type ProviderRequestId = string | number;
+
+export interface ProviderApprovalBinding {
+  providerRequestId: ProviderRequestId;
+  connectionGeneration: number;
   providerSessionId: string;
-  providerRunId?: string;
-  text?: string;
-  status?: "completed" | "interrupted" | "failed";
-  message?: string;
+  providerRunId: string;
+  providerItemId: string;
+  providerApprovalId?: string;
 }
+
+export interface ProviderApprovalRequest {
+  type: ProviderApprovalType;
+  binding: ProviderApprovalBinding;
+  availableDecisions: ApprovalDecision[];
+  details:
+    | { type: "command"; kind: "command" | "writeStdin"; command?: string; cwd?: string; reason?: string }
+    | { type: "fileChange"; grantRoot?: string; reason?: string }
+    | { type: "permission"; cwd: string; permissions: Record<string, unknown>; reason?: string };
+}
+
+export type ProviderEvent =
+  | { type: "messageDelta"; providerSessionId: string; providerRunId?: string; text: string }
+  | { type: "runCompleted"; providerSessionId: string; providerRunId?: string; status: "completed" | "interrupted" | "failed" }
+  | { type: "approvalRequested"; providerSessionId: string; providerRunId: string; approval: ProviderApprovalRequest }
+  | { type: "approvalResolved"; providerSessionId: string; providerRunId: string; approval: ProviderApprovalRequest }
+  | { type: "providerError"; providerSessionId: string; providerRunId?: string; message: string };

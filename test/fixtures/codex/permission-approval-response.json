@@ -1,0 +1,25 @@
+{
+  "jsonrpc": "2.0",
+  "id": "request_permission_fixture",
+  "result": {
+    "permissions": {
+      "fileSystem": {
+        "entries": [
+          {
+            "access": "read",
+            "path": {
+              "type": "special",
+              "value": {
+                "kind": "project_roots"
+              }
+            }
+          }
+        ]
+      },
+      "network": {
+        "enabled": true
+      }
+    },
+    "scope": "turn"
+  }
+}
