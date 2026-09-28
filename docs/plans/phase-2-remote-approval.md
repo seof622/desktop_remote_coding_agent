@@ -193,6 +193,10 @@ Pending -> Accepted -> Resolved
 - [x] `turn/start` 응답과 같은 stream chunk에 포함된 승인 요청을 Run ID 매핑 후 처리하도록 이벤트 순서를
   보정하고 통합 회귀 테스트를 추가했다.
 - [x] Command/File Change의 기본 결정을 adapter에서 검증하고 복합 policy amendment를 제외했다.
+- [x] Provider 중립 Approval과 내부 Provider binding SQLite migration을 추가하고, Project/Session/Run/Item
+  소속 관계를 저장 시 검증한다.
+- [x] 동일 Provider request의 멱등 upsert, 허용 결정의 원자적 단일 claim, Run 종료 시 미해결 Approval
+  일괄 resolve를 구현하고 저장소 회귀 테스트를 추가했다.
 - [ ] 외부 승인 capability 활성화는 저장소·결정 API·수직 슬라이스가 함께 동작하는 시점으로 미룬다.
   부분 구현을 모바일에 사용 가능한 기능처럼 광고하지 않기 위한 조정이다.
 
@@ -200,7 +204,7 @@ Pending -> Accepted -> Resolved
    - 지원 버전 schema에서 세 승인 request/response와 resolved notification fixture를 만든다.
    - JSON-RPC server request의 성공 response, 오류 response, connection generation을 구현한다.
    - Command/File부터 capability를 켜고 Permission은 conformance test 통과 후 켠다.
-2. **Approval 저장소와 상태 머신**
+2. **Approval 저장소와 상태 머신** — 완료
    - Approval 및 내부 Provider binding table과 migration을 추가한다.
    - 중복 request upsert, 원자적 decision claim, 관련 Run 종료 시 일괄 resolve를 구현한다.
 3. **Gateway API와 이벤트**

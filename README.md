@@ -459,8 +459,9 @@ Phase 1은 Approval 결정을 지원하지 않는다. Provider에서 승인 요�
 
 Phase 2 기반 작업으로 `codex-cli 0.153.4` schema의 Command, File Change, Permission 승인 요청을
 명시적으로 구분하고, Provider request를 App Server 연결 세대와 결합하는 adapter 경계를 추가했다.
-Command/File Change의 JSON-RPC 성공 응답과 안전한 오류 응답은 adapter 내부에서 검증되었지만,
-Approval 저장소와 모바일 결정 API가 완성될 때까지 외부 승인 capability는 `false`로 유지한다.
+SQLite에는 Provider 중립 `apr_` Approval과 내부 전용 binding을 분리해 저장하며, 중복 요청 upsert,
+원자적 단일 decision claim, Run 종료 시 미해결 Approval 일괄 resolve를 지원한다. 모바일 결정 API와
+Command/File Change 수직 슬라이스가 완성될 때까지 외부 승인 capability는 `false`로 유지한다.
 
 ---
 

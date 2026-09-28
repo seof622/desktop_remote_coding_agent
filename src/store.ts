@@ -1,9 +1,22 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { conflict, notFound } from "./errors.js";
+import { conflict, invalidRequest, notFound } from "./errors.js";
 import { gatewayId } from "./ids.js";
-import type { AgentEvent, AgentRun, AgentSession, Project, RunStatus, SessionStatus } from "./types.js";
+import type {
+  AgentEvent,
+  AgentRun,
+  AgentSession,
+  Approval,
+  ApprovalDecision,
+  ApprovalStatus,
+  ApprovalType,
+  Project,
+  ProviderApprovalBinding,
+  ProviderRequestId,
+  RunStatus,
+  SessionStatus,
+} from "./types.js";
 
 const ACTIVE_RUNS: RunStatus[] = ["Queued", "Running", "Interrupting"];
 
@@ -20,6 +33,32 @@ interface EventRow {
   event_id: string; sequence: number; type: AgentEvent["type"]; occurred_at: string;
   provider_id: "codex"; project_id: string; session_id: string; run_id: string | null; payload: string;
 }
+interface ApprovalRow {
+  id: string; type: ApprovalType; status: ApprovalStatus; project_id: string; session_id: string;
+  run_id: string; item_id: string; available_decisions: string; display: string; requested_at: string;
+  decided_at: string | null; resolved_at: string | null; resolution_reason: string | null;
+}
+interface ProviderApprovalBindingRow {
+  approval_id: string; provider_request_id: string; connection_generation: number; provider_session_id: string;
+  provider_run_id: string; provider_item_id: string; provider_approval_id: string | null;
+}
+
+export interface CreateApprovalInput {
+  type: ApprovalType;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  availableDecisions: ApprovalDecision[];
+  display: Record<string, unknown>;
+  binding: ProviderApprovalBinding;
+  requestedAt?: string;
+}
+
+export interface ClaimedApproval {
+  approval: Approval;
+  binding: ProviderApprovalBinding;
+}
 
 const projectFrom = (row: ProjectRow): Project => ({ id: row.id, name: row.name, workspacePath: row.workspace_path, createdAt: row.created_at });
 const sessionFrom = (row: SessionRow): AgentSession => ({
@@ -35,6 +74,32 @@ const eventFrom = (row: EventRow): AgentEvent => ({
   providerId: row.provider_id, projectId: row.project_id, sessionId: row.session_id,
   ...(row.run_id ? { runId: row.run_id } : {}), payload: JSON.parse(row.payload) as Record<string, unknown>,
 });
+const approvalFrom = (row: ApprovalRow): Approval => ({
+  id: row.id,
+  type: row.type,
+  status: row.status,
+  projectId: row.project_id,
+  sessionId: row.session_id,
+  runId: row.run_id,
+  itemId: row.item_id,
+  availableDecisions: JSON.parse(row.available_decisions) as ApprovalDecision[],
+  display: JSON.parse(row.display) as Record<string, unknown>,
+  requestedAt: row.requested_at,
+  ...(row.decided_at ? { decidedAt: row.decided_at } : {}),
+  ...(row.resolved_at ? { resolvedAt: row.resolved_at } : {}),
+  ...(row.resolution_reason ? { resolutionReason: row.resolution_reason } : {}),
+});
+const bindingFrom = (row: ProviderApprovalBindingRow): ProviderApprovalBinding => ({
+  providerRequestId: JSON.parse(row.provider_request_id) as ProviderRequestId,
+  connectionGeneration: row.connection_generation,
+  providerSessionId: row.provider_session_id,
+  providerRunId: row.provider_run_id,
+  providerItemId: row.provider_item_id,
+  ...(row.provider_approval_id ? { providerApprovalId: row.provider_approval_id } : {}),
+});
+
+const APPROVAL_DECISIONS = new Set<ApprovalDecision>(["accept", "acceptForSession", "decline", "cancel"]);
+const TERMINAL_RUNS = new Set<RunStatus>(["Completed", "Interrupted", "Failed"]);
 
 export class GatewayStore {
   private readonly database: Database.Database;
@@ -68,6 +133,34 @@ export class GatewayStore {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS event_sequence_by_session ON events(session_id, sequence);
       CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, sequence);
+      CREATE TABLE IF NOT EXISTS approvals (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK (type IN ('command', 'fileChange', 'permission')),
+        status TEXT NOT NULL CHECK (status IN ('Pending', 'Accepted', 'Declined', 'Cancelled', 'Resolved')),
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        item_id TEXT NOT NULL,
+        available_decisions TEXT NOT NULL,
+        display TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_at TEXT,
+        resolved_at TEXT,
+        resolution_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS approvals_by_session_status ON approvals(session_id, status, requested_at DESC);
+      CREATE INDEX IF NOT EXISTS approvals_by_run_status ON approvals(run_id, status);
+      CREATE TABLE IF NOT EXISTS provider_approval_bindings (
+        approval_id TEXT PRIMARY KEY REFERENCES approvals(id) ON DELETE CASCADE,
+        provider_request_id TEXT NOT NULL,
+        connection_generation INTEGER NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        provider_run_id TEXT NOT NULL,
+        provider_item_id TEXT NOT NULL,
+        provider_approval_id TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS provider_approval_request
+        ON provider_approval_bindings(connection_generation, provider_request_id);
     `);
   }
 
@@ -140,10 +233,180 @@ export class GatewayStore {
     return this.getRun(runId);
   }
   updateRunStatus(runId: string, status: RunStatus): AgentRun {
-    const current = this.getRun(runId);
-    if (!validRunTransition(current.status, status)) throw conflict(`Run cannot transition from ${current.status} to ${status}.`);
-    this.database.prepare("UPDATE runs SET status = ?, updated_at = ? WHERE id = ?").run(status, new Date().toISOString(), runId);
-    return this.getRun(runId);
+    const update = this.database.transaction(() => {
+      const current = this.getRun(runId);
+      if (!validRunTransition(current.status, status)) throw conflict(`Run cannot transition from ${current.status} to ${status}.`);
+      const now = new Date().toISOString();
+      this.database.prepare("UPDATE runs SET status = ?, updated_at = ? WHERE id = ?").run(status, now, runId);
+      if (TERMINAL_RUNS.has(status)) {
+        this.database.prepare(`
+          UPDATE approvals
+          SET status = 'Resolved', resolved_at = ?, resolution_reason = ?
+          WHERE run_id = ? AND status <> 'Resolved'
+        `).run(now, `RUN_${status.toUpperCase()}`, runId);
+      }
+      return this.getRun(runId);
+    });
+    return update();
+  }
+
+  listApprovals(filter: { sessionId?: string; runId?: string; status?: ApprovalStatus } = {}): Approval[] {
+    return (this.database.prepare(`
+      SELECT * FROM approvals
+      WHERE (? IS NULL OR session_id = ?)
+        AND (? IS NULL OR run_id = ?)
+        AND (? IS NULL OR status = ?)
+      ORDER BY requested_at DESC, id DESC
+    `).all(
+      filter.sessionId ?? null, filter.sessionId ?? null,
+      filter.runId ?? null, filter.runId ?? null,
+      filter.status ?? null, filter.status ?? null,
+    ) as ApprovalRow[]).map(approvalFrom);
+  }
+
+  getApproval(approvalId: string): Approval {
+    const row = this.database.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId) as ApprovalRow | undefined;
+    if (!row) throw notFound("Approval");
+    return approvalFrom(row);
+  }
+
+  getApprovalBinding(approvalId: string): ProviderApprovalBinding {
+    const row = this.database.prepare("SELECT * FROM provider_approval_bindings WHERE approval_id = ?").get(approvalId) as ProviderApprovalBindingRow | undefined;
+    if (!row) throw notFound("Approval binding");
+    return bindingFrom(row);
+  }
+
+  upsertApproval(input: CreateApprovalInput): Approval {
+    const availableDecisions = [...new Set(input.availableDecisions)];
+    if (availableDecisions.some((decision) => !APPROVAL_DECISIONS.has(decision))) {
+      throw invalidRequest("Approval includes an unsupported decision.");
+    }
+    if (!Number.isInteger(input.binding.connectionGeneration) || input.binding.connectionGeneration < 1
+      || (typeof input.binding.providerRequestId === "number" && !Number.isFinite(input.binding.providerRequestId))
+      || !input.binding.providerSessionId || !input.binding.providerRunId || !input.binding.providerItemId) {
+      throw invalidRequest("Approval Provider binding is invalid.");
+    }
+    if (!input.itemId || input.itemId !== input.binding.providerItemId) {
+      throw conflict("Approval item ownership does not match the Provider binding.");
+    }
+    const providerRequestId = JSON.stringify(input.binding.providerRequestId);
+    const upsert = this.database.transaction(() => {
+      const session = this.getSession(input.sessionId);
+      const run = this.getRun(input.runId);
+      if (session.projectId !== input.projectId || run.sessionId !== session.id) {
+        throw conflict("Approval Project, Session, and Run ownership does not match.");
+      }
+      if (session.providerSessionId !== input.binding.providerSessionId
+        || run.providerRunId !== input.binding.providerRunId) {
+        throw conflict("Approval ownership does not match the Provider Session and Run.");
+      }
+
+      const existingBinding = this.database.prepare(`
+        SELECT * FROM provider_approval_bindings
+        WHERE connection_generation = ? AND provider_request_id = ?
+      `).get(input.binding.connectionGeneration, providerRequestId) as ProviderApprovalBindingRow | undefined;
+      if (existingBinding) {
+        const existing = this.getApproval(existingBinding.approval_id);
+        const storedBinding = bindingFrom(existingBinding);
+        if (existing.type !== input.type
+          || existing.projectId !== input.projectId
+          || existing.sessionId !== input.sessionId
+          || existing.runId !== input.runId
+          || existing.itemId !== input.itemId
+          || JSON.stringify(existing.availableDecisions) !== JSON.stringify(availableDecisions)
+          || JSON.stringify(existing.display) !== JSON.stringify(input.display)
+          || !sameProviderBinding(storedBinding, input.binding)) {
+          throw conflict("Provider request ID is already bound to a different Approval.");
+        }
+        return existing;
+      }
+      if (!ACTIVE_RUNS.includes(run.status)) throw conflict("Approval cannot be attached to a finished Run.");
+
+      const requestedAt = input.requestedAt ?? new Date().toISOString();
+      const approval: Approval = {
+        id: gatewayId("apr"),
+        type: input.type,
+        status: "Pending",
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        itemId: input.itemId,
+        availableDecisions,
+        display: input.display,
+        requestedAt,
+      };
+      this.database.prepare(`
+        INSERT INTO approvals (
+          id, type, status, project_id, session_id, run_id, item_id, available_decisions, display,
+          requested_at, decided_at, resolved_at, resolution_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+      `).run(
+        approval.id, approval.type, approval.status, approval.projectId, approval.sessionId, approval.runId,
+        approval.itemId, JSON.stringify(approval.availableDecisions), JSON.stringify(approval.display), approval.requestedAt,
+      );
+      this.database.prepare(`
+        INSERT INTO provider_approval_bindings (
+          approval_id, provider_request_id, connection_generation, provider_session_id,
+          provider_run_id, provider_item_id, provider_approval_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        approval.id, providerRequestId, input.binding.connectionGeneration, input.binding.providerSessionId,
+        input.binding.providerRunId, input.binding.providerItemId, input.binding.providerApprovalId ?? null,
+      );
+      return approval;
+    });
+    return upsert();
+  }
+
+  claimApprovalDecision(approvalId: string, decision: ApprovalDecision): ClaimedApproval {
+    if (!APPROVAL_DECISIONS.has(decision)) throw invalidRequest("Approval decision is not supported.");
+    const claim = this.database.transaction(() => {
+      const approval = this.getApproval(approvalId);
+      if (!approval.availableDecisions.includes(decision)) {
+        throw invalidRequest("Approval decision is not available for this request.");
+      }
+      if (approval.status !== "Pending") throw conflict("Approval is no longer pending.");
+      const status: ApprovalStatus = decision === "decline"
+        ? "Declined"
+        : decision === "cancel"
+          ? "Cancelled"
+          : "Accepted";
+      const result = this.database.prepare(`
+        UPDATE approvals SET status = ?, decided_at = ? WHERE id = ? AND status = 'Pending'
+      `).run(status, new Date().toISOString(), approvalId);
+      if (result.changes !== 1) throw conflict("Approval is no longer pending.");
+      return { approval: this.getApproval(approvalId), binding: this.getApprovalBinding(approvalId) };
+    });
+    return claim();
+  }
+
+  resolveApproval(approvalId: string, resolutionReason: string): Approval {
+    if (!isResolutionReason(resolutionReason)) throw invalidRequest("Approval resolution reason is invalid.");
+    const resolve = this.database.transaction(() => {
+      const approval = this.getApproval(approvalId);
+      if (approval.status === "Resolved") return approval;
+      this.database.prepare(`
+        UPDATE approvals
+        SET status = 'Resolved', resolved_at = ?, resolution_reason = ?
+        WHERE id = ? AND status <> 'Resolved'
+      `).run(new Date().toISOString(), resolutionReason, approvalId);
+      return this.getApproval(approvalId);
+    });
+    return resolve();
+  }
+
+  resolveApprovalsForRun(runId: string, resolutionReason: string): Approval[] {
+    if (!isResolutionReason(resolutionReason)) throw invalidRequest("Approval resolution reason is invalid.");
+    const resolve = this.database.transaction(() => {
+      this.getRun(runId);
+      this.database.prepare(`
+        UPDATE approvals
+        SET status = 'Resolved', resolved_at = ?, resolution_reason = ?
+        WHERE run_id = ? AND status <> 'Resolved'
+      `).run(new Date().toISOString(), resolutionReason, runId);
+      return this.listApprovals({ runId });
+    });
+    return resolve();
   }
 
   appendEvent(event: Omit<AgentEvent, "eventId" | "sequence" | "occurredAt">): AgentEvent {
@@ -159,6 +422,19 @@ export class GatewayStore {
   listEvents(sessionId: string, afterSequence = 0): AgentEvent[] {
     return (this.database.prepare("SELECT * FROM events WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC").all(sessionId, afterSequence) as EventRow[]).map(eventFrom);
   }
+}
+
+function sameProviderBinding(left: ProviderApprovalBinding, right: ProviderApprovalBinding): boolean {
+  return left.providerRequestId === right.providerRequestId
+    && left.connectionGeneration === right.connectionGeneration
+    && left.providerSessionId === right.providerSessionId
+    && left.providerRunId === right.providerRunId
+    && left.providerItemId === right.providerItemId
+    && left.providerApprovalId === right.providerApprovalId;
+}
+
+function isResolutionReason(value: string): boolean {
+  return /^[A-Z][A-Z0-9_]{0,119}$/.test(value);
 }
 
 function validRunTransition(from: RunStatus, to: RunStatus): boolean {

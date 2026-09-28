@@ -30,8 +30,14 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 - `availableDecisions`가 없으면 세션 범위를 넓히는 `acceptForSession`을 제외한 보수적 기본 결정을 사용한다.
 - Permission 요청/응답 fixture와 안전한 오류 경로는 존재하지만, 실제 scope·거절 conformance 검증 전까지
   capability를 활성화하지 않는다.
-- Approval 저장소와 모바일 결정 API가 아직 없으므로 Gateway는 요청을 자동 승인하지 않고 안전한 오류로
-  응답한 뒤 기존 Phase 1 실패 이벤트를 유지한다.
+- Gateway는 Provider 중립 `apr_` Approval과 Provider 원본 binding을 별도 SQLite table에 저장한다.
+  동일 연결 세대와 request ID의 동일 요청은 기존 Approval을 반환하고, 다른 소속이나 내용으로 재사용하면 거부한다.
+- decision claim은 SQLite transaction에서 `Pending` 상태를 한 번만 변경한다. Provider가 허용하지 않은 결정,
+  중복 결정, 종료된 Run의 결정은 거부한다.
+- Run이 `Completed`, `Interrupted`, `Failed`로 전이하면 해당 Run의 미해결 Approval을 같은 transaction에서
+  `Resolved`로 종료한다.
+- 모바일 결정 API가 아직 없으므로 Gateway는 Provider 요청을 자동 승인하지 않고 안전한 오류로 응답한 뒤
+  기존 Phase 1 실패 이벤트를 유지한다. 외부 승인 capability도 계속 `false`다.
 
 ## 금지 사항
 

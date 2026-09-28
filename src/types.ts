@@ -47,6 +47,26 @@ export interface AgentRun {
   updatedAt: string;
 }
 
+export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+export type ApprovalType = "command" | "fileChange" | "permission";
+export type ApprovalStatus = "Pending" | "Accepted" | "Declined" | "Cancelled" | "Resolved";
+
+export interface Approval {
+  id: string;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  itemId: string;
+  availableDecisions: ApprovalDecision[];
+  display: Record<string, unknown>;
+  requestedAt: string;
+  decidedAt?: string;
+  resolvedAt?: string;
+  resolutionReason?: string;
+}
+
 export interface AgentEvent {
   eventId: string;
   sequence: number;
@@ -59,8 +79,7 @@ export interface AgentEvent {
   payload: Record<string, unknown>;
 }
 
-export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
-export type ProviderApprovalType = "command" | "fileChange" | "permission";
+export type ProviderApprovalType = ApprovalType;
 export type ProviderRequestId = string | number;
 
 export interface ProviderApprovalBinding {
