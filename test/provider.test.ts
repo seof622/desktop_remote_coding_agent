@@ -67,6 +67,7 @@ describe("CodexProvider approval boundary", () => {
         details: { type: "command", kind: "command", command: "npm test", cwd: "C:\\workspace" },
         binding: {
           providerRequestId: "request_command_fixture",
+          providerConnectionId: expect.any(String),
           connectionGeneration: 1,
           providerSessionId: "thread_fixture",
           providerRunId: "turn_fixture",
@@ -80,6 +81,21 @@ describe("CodexProvider approval boundary", () => {
     await provider.respondToApproval(event.approval.binding, "accept");
     await expect(resolved).resolves.toMatchObject({ type: "approvalResolved", approval: { type: "command" } });
     await expect(provider.respondToApproval(event.approval.binding, "accept")).rejects.toThrow("no longer pending");
+  });
+
+  it.each([
+    ["acceptForSession", "command-approval-accept-for-session-response.json"],
+    ["decline", "command-approval-decline-response.json"],
+    ["cancel", "command-approval-cancel-response.json"],
+  ] as const)("maps the %s command decision to the exact JSON-RPC response", async (decision, responseFixture) => {
+    const provider = createProvider("command-approval-request.json", responseFixture);
+    const event = await startApprovalRun(provider);
+    if (event.type !== "approvalRequested") throw new Error("Expected approvalRequested.");
+    const resolved = nextEvent(provider, "approvalResolved");
+
+    await provider.respondToApproval(event.approval.binding, decision);
+
+    await expect(resolved).resolves.toMatchObject({ type: "approvalResolved", approval: { type: "command" } });
   });
 
   it("uses conservative defaults for file changes when availableDecisions is absent", async () => {
@@ -136,27 +152,31 @@ describe("CodexProvider approval boundary", () => {
       .rejects.toThrow("unavailable connection");
   });
 
-  it("does not lose an approval batched with the turn/start response", async () => {
+  it("persists and decides an approval batched with the turn/start response", async () => {
     const directory = await mkdtemp(join(tmpdir(), "desktop-gateway-provider-"));
     temporaryDirectories.push(directory);
     const store = new GatewayStore(directory);
     stores.push(store);
-    const provider = createProvider("command-approval-request.json", "error");
+    const provider = createProvider("command-approval-request.json", "command-approval-response.json");
     const gateway = new GatewayService(store, provider);
     const project = gateway.createProject("workspace", process.cwd());
     const session = await gateway.startSession(project.id);
-    const resolved = nextEvent(provider, "approvalResolved");
 
     const run = await gateway.startRun(session.id, "trigger fixture approval");
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+    const resolved = nextEvent(provider, "approvalResolved");
+    await gateway.decideApproval(approval.id, "accept");
 
     await expect(resolved).resolves.toMatchObject({ type: "approvalResolved", approval: { type: "command" } });
-    expect(run.status).toBe("Failed");
-    expect(gateway.listEvents(session.id).map((event) => event.type)).toEqual([
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(run.status).toBe("Running");
+    expect(gateway.getApproval(approval.id)).toMatchObject({ status: "Resolved", resolutionReason: "PROVIDER_RESOLVED" });
+    expect(gateway.listEvents(session.id).map((event) => event.type)).toEqual(expect.arrayContaining([
       "session.started",
       "run.started",
-      "agent.status",
-      "error",
-    ]);
-    expect(gateway.listEvents(session.id).at(-1)?.payload).toMatchObject({ code: "APPROVAL_UNSUPPORTED" });
+      "approval.requested",
+      "approval.resolved",
+    ]));
+    expect(provider.capabilities).toMatchObject({ commandApproval: true, fileChangeApproval: true, permissionApproval: false });
   });
 });

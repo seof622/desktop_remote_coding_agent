@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { GatewayStore, type CreateApprovalInput } from "../src/store.js";
 
@@ -38,11 +39,11 @@ function approvalInput(
     projectId: ownership.project.id,
     sessionId: ownership.session.id,
     runId: ownership.run.id,
-    itemId: `item_${suffix}`,
     availableDecisions: ["accept", "decline", "cancel"],
-    display: { kind: "command", summary: `safe-${suffix}` },
+    display: { type: "command", kind: "command", command: `safe-${suffix}` },
     binding: {
       providerRequestId: `request_${suffix}`,
+      providerConnectionId: "connection_test",
       connectionGeneration: 1,
       providerSessionId: ownership.session.providerSessionId,
       providerRunId: ownership.run.providerRunId!,
@@ -54,6 +55,33 @@ function approvalInput(
 }
 
 describe("GatewayStore approvals", () => {
+  it("migrates the legacy Provider binding table with a connection instance scope", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "desktop-gateway-store-legacy-"));
+    temporaryDirectories.push(directory);
+    const legacy = new Database(join(directory, "gateway.db"));
+    legacy.exec(`
+      CREATE TABLE provider_approval_bindings (
+        approval_id TEXT PRIMARY KEY,
+        provider_request_id TEXT NOT NULL,
+        connection_generation INTEGER NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        provider_run_id TEXT NOT NULL,
+        provider_item_id TEXT NOT NULL,
+        provider_approval_id TEXT
+      );
+      CREATE UNIQUE INDEX provider_approval_request
+        ON provider_approval_bindings(connection_generation, provider_request_id);
+    `);
+    legacy.close();
+
+    const store = new GatewayStore(directory);
+    stores.push(store);
+    const ownership = createActiveRun(store, "legacy");
+    const approval = store.upsertApproval(approvalInput(ownership, "legacy"));
+
+    expect(store.getApprovalBinding(approval.id).providerConnectionId).toBe("connection_test");
+  });
+
   it("persists a Provider-neutral Approval and idempotently upserts the same Provider request", async () => {
     const { store } = await createStore();
     const ownership = createActiveRun(store);
@@ -63,6 +91,7 @@ describe("GatewayStore approvals", () => {
     const duplicate = store.upsertApproval(input);
 
     expect(created.id).toMatch(/^apr_[a-f0-9]{32}$/);
+    expect(created.itemId).toMatch(/^itm_[a-f0-9]{32}$/);
     expect(duplicate.id).toBe(created.id);
     expect(store.listApprovals({ sessionId: ownership.session.id, status: "Pending" })).toEqual([created]);
     expect(store.getApprovalBinding(created.id)).toEqual(input.binding);
@@ -82,10 +111,28 @@ describe("GatewayStore approvals", () => {
       ...approvalInput(first, "wrong-run"),
       binding: { ...approvalInput(first, "wrong-run").binding, providerRunId: second.run.providerRunId! },
     })).toThrow("Provider Session and Run");
-    expect(() => store.upsertApproval({ ...approvalInput(first, "wrong-item"), itemId: "different_item" }))
-      .toThrow("item ownership");
-    expect(() => store.upsertApproval({ ...input, display: { kind: "command", summary: "changed" } }))
+    expect(() => store.upsertApproval({
+      ...input,
+      binding: { ...input.binding, providerItemId: "different_item" },
+    })).toThrow("already bound to a different Approval");
+    expect(() => store.upsertApproval({ ...input, display: { type: "command", kind: "command", command: "changed" } }))
       .toThrow("already bound to a different Approval");
+  });
+
+  it("allows the same Provider request ID on a new connection instance", async () => {
+    const { store } = await createStore();
+    const ownership = createActiveRun(store);
+    const first = approvalInput(ownership, "reused");
+    const second: CreateApprovalInput = {
+      ...first,
+      binding: { ...first.binding, providerConnectionId: "connection_after_restart" },
+    };
+
+    const firstApproval = store.upsertApproval(first);
+    const secondApproval = store.upsertApproval(second);
+
+    expect(secondApproval.id).not.toBe(firstApproval.id);
+    expect(store.listApprovals({ runId: ownership.run.id })).toHaveLength(2);
   });
 
   it("claims an allowed decision exactly once across store connections", async () => {

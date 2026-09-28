@@ -41,3 +41,23 @@ MVP의 대표 이벤트는 `agent.status`, `session.started`, `run.started`,
   반환한다. Session별 최근 1,000개 또는 7일을 넘는 이벤트는 재전송하지 않으며, 클라이언트는 상태를 재조회한다.
 - Phase 1은 `agent.status`, `session.started`, `run.started`, `agent.message.delta`, `run.completed`, `error`
   만 발행한다. Approval·Git·Build/Test 이벤트는 다음 Phase의 계약이다.
+
+## Phase 2 Approval 구현 계약
+
+- Gateway는 `apr_` Approval ID와 `itm_` Item ID만 외부에 노출한다. Provider request, Thread, Turn, Item ID와
+  연결 인스턴스·세대는 내부 binding에만 저장한다.
+- 인증된 클라이언트는 `GET /approvals?sessionId={optional}&status={optional}`와
+  `GET /approvals/{approvalId}`로 승인 상태를 조회한다.
+- `POST /approvals/{approvalId}/decision`은 `{ "decision": "accept" }`를 받고 `accept`,
+  `acceptForSession`, `decline`, `cancel`만 형식상 허용한다. 실제 결정은 해당 Approval의
+  `availableDecisions`에 포함돼야 하며 Pending 상태에서 한 번만 claim된다.
+- 없는 Approval은 `404`, 중복·종료된 결정은 `409`, 잘못된 형식이나 허용되지 않은 결정은 `400`,
+  Provider 전달 실패는 안전한 `503`으로 응답한다.
+- `approval.requested` payload는 `approvalId`, `type`, `status`, `itemId`, `availableDecisions`, `display`를
+  포함한다. `approval.resolved`는 `approvalId`, `status`, 안전한 `resolutionReason` code를 포함한다.
+- 이벤트는 기존 Session sequence와 replay 정책을 사용한다. 재연결 클라이언트는 이벤트 replay와 Pending
+  Approval 조회를 함께 수행하고 `approvalId`로 중복 UI를 제거한다.
+- Gateway 재시작 시 이전 Provider 연결의 미해결 Approval은 `PROVIDER_APPROVAL_UNAVAILABLE`로 resolve하고
+  `approval.resolved`를 replay 가능한 이벤트로 저장한다. 이전 request ID로 결정을 재전송하지 않는다.
+- Command와 File Change capability는 활성화한다. Permission capability는 실제 scope·거절 conformance 검증
+  전까지 비활성화하며 자동 수락하지 않는다.

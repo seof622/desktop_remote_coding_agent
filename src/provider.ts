@@ -210,6 +210,7 @@ function availableDecisions(value: unknown, type: ProviderApprovalType): Approva
 }
 
 function parseApprovalRequest(
+  connectionId: string,
   generation: number,
   requestId: ProviderRequestId,
   method: string,
@@ -224,6 +225,7 @@ function parseApprovalRequest(
   if (!providerSessionId || !providerRunId || !providerItemId || !Number.isInteger(params.startedAtMs)) return undefined;
   const binding: ProviderApprovalBinding = {
     providerRequestId: requestId,
+    providerConnectionId: connectionId,
     connectionGeneration: generation,
     providerSessionId,
     providerRunId,
@@ -277,11 +279,12 @@ export class CodexProvider implements AgentProvider {
   readonly id = "codex" as const;
   readonly capabilities: ProviderCapabilities = {
     resumableSessions: true, eventStreaming: true, interruptRun: true,
-    commandApproval: false, fileChangeApproval: false, permissionApproval: false, workspaceAccess: true,
+    commandApproval: true, fileChangeApproval: true, permissionApproval: false, workspaceAccess: true,
   };
   private readonly rpc: JsonRpcProcess;
   private initialization: Promise<void> | undefined;
   private closing = false;
+  private readonly connectionId = randomUUID();
   private readonly listeners = new Set<(event: ProviderEvent) => void>();
   private readonly pendingApprovals = new Map<string, PendingProviderApproval>();
 
@@ -343,7 +346,7 @@ export class CodexProvider implements AgentProvider {
     const pending = this.claimApproval(binding);
     pending.state = "responded";
     try {
-      await this.rpc.respondError(binding.providerRequestId, binding.connectionGeneration, "Approval is not supported in Phase 1.");
+      await this.rpc.respondError(binding.providerRequestId, binding.connectionGeneration, "This approval type is not supported by the Gateway.");
     } catch (error) {
       this.pendingApprovals.delete(requestKey(binding.connectionGeneration, binding.providerRequestId));
       throw error;
@@ -414,7 +417,7 @@ export class CodexProvider implements AgentProvider {
   }
 
   private handleServerRequest(generation: number, id: ProviderRequestId, method: string, value: unknown): void {
-    const approval = parseApprovalRequest(generation, id, method, value);
+    const approval = parseApprovalRequest(this.connectionId, generation, id, method, value);
     if (approval) {
       const key = requestKey(generation, id);
       if (this.pendingApprovals.has(key)) return;
@@ -437,6 +440,7 @@ export class CodexProvider implements AgentProvider {
     const pending = this.pendingApprovals.get(requestKey(binding.connectionGeneration, binding.providerRequestId));
     const stored = pending?.request.binding;
     if (!pending || pending.state !== "pending" || !stored
+      || stored.providerConnectionId !== binding.providerConnectionId
       || stored.providerSessionId !== binding.providerSessionId
       || stored.providerRunId !== binding.providerRunId
       || stored.providerItemId !== binding.providerItemId

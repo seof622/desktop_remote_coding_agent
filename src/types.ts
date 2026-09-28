@@ -8,6 +8,8 @@ export type EventType =
   | "session.started"
   | "run.started"
   | "agent.message.delta"
+  | "approval.requested"
+  | "approval.resolved"
   | "run.completed"
   | "error";
 
@@ -50,6 +52,10 @@ export interface AgentRun {
 export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 export type ApprovalType = "command" | "fileChange" | "permission";
 export type ApprovalStatus = "Pending" | "Accepted" | "Declined" | "Cancelled" | "Resolved";
+export type ApprovalDisplay =
+  | { type: "command"; kind: "command" | "writeStdin"; command?: string; cwd?: string; reason?: string }
+  | { type: "fileChange"; grantRoot?: string; reason?: string }
+  | { type: "permission"; filesystemEntries: string[]; networkEnabled: boolean; reason?: string };
 
 export interface Approval {
   id: string;
@@ -60,7 +66,7 @@ export interface Approval {
   runId: string;
   itemId: string;
   availableDecisions: ApprovalDecision[];
-  display: Record<string, unknown>;
+  display: ApprovalDisplay;
   requestedAt: string;
   decidedAt?: string;
   resolvedAt?: string;
@@ -84,6 +90,7 @@ export type ProviderRequestId = string | number;
 
 export interface ProviderApprovalBinding {
   providerRequestId: ProviderRequestId;
+  providerConnectionId: string;
   connectionGeneration: number;
   providerSessionId: string;
   providerRunId: string;

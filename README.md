@@ -388,7 +388,7 @@ npm run dev
 | `CODEX_COMMAND` | `codex` | Codex CLI 실행 파일 |
 | `CODEX_APP_SERVER_ARGS` | `app-server` | Codex App Server 인자 |
 
-## Phase 1 Mobile API
+## Mobile API
 
 Provider별 프로토콜을 외부에 노출하지 않는, 현재 구현된 Provider 중립적 API다. `GET /dashboard`는
 Token·Project·Session 데이터를 포함하지 않는 공개 정적 테스트 화면이다. 그 외 모든 HTTP API에는
@@ -426,12 +426,21 @@ POST   /sessions/{sessionId}/runs
 POST   /sessions/{sessionId}/interrupt
 
 GET    /sessions/{sessionId}/events?afterSequence={number}
+
+GET    /approvals?sessionId={optional}&status={optional}
+GET    /approvals/{approvalId}
+POST   /approvals/{approvalId}/decision
 ```
 
 `POST /projects`는 `{ "name", "workspacePath" }`를 받고, 경로가 정규화된 허용 root 하위인지
 검증한다. `POST /sessions`는 `{ "providerId": "codex", "projectId" }`,
 `POST /sessions/{sessionId}/runs`는 `{ "text" }`를 받는다. Gateway가 발급하는 `prj_`, `ses_`,
-`run_`, `evt_` ID만 외부에 반환하며 Codex Thread/Turn ID는 노출하지 않는다.
+`run_`, `evt_`, `apr_`, `itm_` ID만 외부에 반환하며 Codex Thread/Turn/Item/request ID는 노출하지 않는다.
+
+Approval 결정 요청은 `{ "decision": "accept" }` 형태이며 `accept`, `acceptForSession`, `decline`, `cancel`
+중 해당 Approval의 `availableDecisions`에 포함된 값만 허용한다. Command와 File Change approval을 지원하며,
+Permission approval은 실제 Codex conformance 검증 전까지 capability가 `false`다. command, cwd, reason,
+grant root는 길이 제한, 제어문자 제거, secret·개인 경로 마스킹, Project 기준 상대 경로 변환 후 노출한다.
 
 오류는 `{ "error": { "code", "message" } }` 형태다. 잘못된 입력은 `400`, 인증 실패는 `401`,
 허용되지 않은 Workspace는 `403`, 리소스 없음은 `404`, 상태 충돌은 `409`, Provider 시작/통신 실패는
@@ -446,7 +455,8 @@ WS /events?sessionId={optional}&afterSequence={optional}
 주요 이벤트:
 
 ```text
-agent.status, session.started, run.started, agent.message.delta, run.completed, error
+agent.status, session.started, run.started, agent.message.delta,
+approval.requested, approval.resolved, run.completed, error
 ```
 
 이벤트 envelope는 `eventId`, `sequence`, `type`, `occurredAt`, `providerId`, `projectId`,
@@ -454,14 +464,13 @@ agent.status, session.started, run.started, agent.message.delta, run.completed, 
 보존된다. 연결 시 `afterSequence` 이후의 보존 이벤트를 먼저 재전송한 뒤 실시간 이벤트를 보낸다.
 Session별 최근 1,000개 및 7일 이내 이벤트만 보존하므로 범위 밖이면 Session/Run 상태를 다시 조회해야 한다.
 
-Phase 1은 Approval 결정을 지원하지 않는다. Provider에서 승인 요청을 받으면 절대 자동 승인하지 않고,
-`agent.status: WaitingApproval` 및 안전한 `error` 이벤트로 해당 Run을 실패 처리한다.
-
-Phase 2 기반 작업으로 `codex-cli 0.153.4` schema의 Command, File Change, Permission 승인 요청을
-명시적으로 구분하고, Provider request를 App Server 연결 세대와 결합하는 adapter 경계를 추가했다.
-SQLite에는 Provider 중립 `apr_` Approval과 내부 전용 binding을 분리해 저장하며, 중복 요청 upsert,
-원자적 단일 decision claim, Run 종료 시 미해결 Approval 일괄 resolve를 지원한다. 모바일 결정 API와
-Command/File Change 수직 슬라이스가 완성될 때까지 외부 승인 capability는 `false`로 유지한다.
+Command와 File Change approval은 요청을 SQLite에 먼저 저장한 뒤 `approval.requested`를 발행한다.
+결정은 한 번만 원자적으로 claim하고 Codex App Server에 정확한 JSON-RPC response를 전달한다.
+`serverRequest/resolved`, Run 종료 또는 Provider response 전달 실패 시 `approval.resolved`를 발행한다.
+모바일 재연결 시 기존 이벤트 replay와 Pending Approval 조회를 함께 사용한다. 현재 Dashboard에는 Approval UI가
+없으므로 REST/WebSocket 클라이언트로만 검증할 수 있다. Gateway 재시작 시 이전 연결의 미해결 Approval은
+`PROVIDER_APPROVAL_UNAVAILABLE`로 종료하며 오래된 Provider request ID를 재생하지 않는다. Permission approval은
+자동 수락하지 않고 안전하게 실패한다.
 
 ---
 

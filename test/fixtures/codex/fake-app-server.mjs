@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 const request = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const expected = process.argv[3] === "error"
-  ? { jsonrpc: "2.0", id: request.id, error: { code: -32001, message: "Approval is not supported in Phase 1." } }
+  ? { jsonrpc: "2.0", id: request.id, error: { code: -32001, message: "This approval type is not supported by the Gateway." } }
   : JSON.parse(readFileSync(process.argv[3], "utf8"));
 const resolvedTemplate = JSON.parse(readFileSync(process.argv[4], "utf8"));
 let buffer = "";

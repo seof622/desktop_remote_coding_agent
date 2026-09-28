@@ -1,8 +1,19 @@
+import { approvalDisplay } from "./approval.js";
 import { GatewayError, conflict } from "./errors.js";
 import { EventHub } from "./events.js";
 import type { AgentProvider } from "./provider.js";
 import { GatewayStore } from "./store.js";
-import type { AgentEvent, AgentRun, AgentSession, Project, ProviderEvent, RunStatus } from "./types.js";
+import type {
+  AgentEvent,
+  AgentRun,
+  AgentSession,
+  Approval,
+  ApprovalDecision,
+  ApprovalStatus,
+  Project,
+  ProviderEvent,
+  RunStatus,
+} from "./types.js";
 
 function safeProviderFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : "Unknown provider error.";
@@ -19,6 +30,9 @@ export class GatewayService {
   private readonly deferredProviderEvents = new Map<string, ProviderEvent[]>();
 
   constructor(private readonly store: GatewayStore, private readonly provider: AgentProvider) {
+    for (const approval of store.listApprovals().filter((item) => item.status !== "Resolved")) {
+      this.publishApprovalResolved(store.resolveApproval(approval.id, "PROVIDER_APPROVAL_UNAVAILABLE"));
+    }
     provider.onEvent((event) => { void this.handleProviderEvent(event); });
   }
 
@@ -29,6 +43,30 @@ export class GatewayService {
   listSessions(): AgentSession[] { return this.store.listSessions(); }
   getSession(sessionId: string): AgentSession { return this.store.getSession(sessionId); }
   listEvents(sessionId: string, afterSequence?: number): AgentEvent[] { this.store.getSession(sessionId); return this.store.listEvents(sessionId, afterSequence); }
+  listApprovals(filter: { sessionId?: string; status?: ApprovalStatus } = {}): Approval[] {
+    if (filter.sessionId) this.store.getSession(filter.sessionId);
+    return this.store.listApprovals(filter);
+  }
+  getApproval(approvalId: string): Approval { return this.store.getApproval(approvalId); }
+
+  async decideApproval(approvalId: string, decision: ApprovalDecision): Promise<Approval> {
+    const claimed = this.store.claimApprovalDecision(approvalId, decision);
+    const session = this.store.getSession(claimed.approval.sessionId);
+    const run = this.store.getRun(claimed.approval.runId);
+    if (run.sessionId !== session.id || session.projectId !== claimed.approval.projectId) {
+      throw conflict("Approval ownership no longer matches its Session and Run.");
+    }
+    try {
+      await this.provider.respondToApproval(claimed.binding, decision);
+    } catch {
+      const resolved = this.store.resolveApproval(approvalId, "PROVIDER_RESPONSE_FAILED");
+      this.publishApprovalResolved(resolved);
+      await this.failRun(session, run, "PROVIDER_APPROVAL_UNAVAILABLE", "The approval decision could not be delivered.");
+      throw new GatewayError(503, "PROVIDER_UNAVAILABLE", "The approval decision could not be delivered.");
+    }
+    this.publishRunApprovalStatus(session, run);
+    return this.store.getApproval(approvalId);
+  }
 
   async startSession(projectId: string): Promise<AgentSession> {
     const project = this.store.getProject(projectId);
@@ -68,7 +106,7 @@ export class GatewayService {
       return this.store.getRun(running.id);
     } catch {
       await this.rejectDeferredApprovals(session.providerSessionId);
-      const failed = this.store.updateRunStatus(run.id, "Failed");
+      const failed = this.transitionRun(session, run, "Failed");
       this.publish({ type: "error", projectId: session.projectId, sessionId: session.id, runId: failed.id, payload: { code: "PROVIDER_UNAVAILABLE", message: "Codex App Server could not start the run." } });
       throw new GatewayError(503, "PROVIDER_UNAVAILABLE", "Codex App Server could not start the run.");
     }
@@ -84,7 +122,7 @@ export class GatewayService {
       await this.provider.interruptRun(session.providerSessionId, active.providerRunId);
       return interrupting;
     } catch {
-      const failed = this.store.updateRunStatus(active.id, "Failed");
+      const failed = this.transitionRun(session, active, "Failed");
       this.publish({ type: "error", projectId: session.projectId, sessionId, runId: failed.id, payload: { code: "PROVIDER_UNAVAILABLE", message: "Codex App Server could not interrupt the run." } });
       throw new GatewayError(503, "PROVIDER_UNAVAILABLE", "Codex App Server could not interrupt the run.");
     }
@@ -99,7 +137,12 @@ export class GatewayService {
       return;
     }
     const session = this.store.findSessionByProviderId(event.providerSessionId);
-    if (!session) return;
+    if (!session) {
+      if (event.type === "approvalRequested") {
+        try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
+      }
+      return;
+    }
     const run = event.providerRunId ? this.store.findRunByProviderId(event.providerRunId) : this.store.listRuns(session.id).find((item) => ["Queued", "Running", "Interrupting"].includes(item.status));
     if (!run && event.providerRunId) {
       const startingRun = this.store.listRuns(session.id).find((item) => item.status === "Queued" && item.providerRunId === null);
@@ -107,6 +150,8 @@ export class GatewayService {
         const deferred = this.deferredProviderEvents.get(event.providerSessionId) ?? [];
         deferred.push(event);
         this.deferredProviderEvents.set(event.providerSessionId, deferred);
+      } else if (event.type === "approvalRequested") {
+        try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
       }
       return;
     }
@@ -117,18 +162,65 @@ export class GatewayService {
     if (event.type === "runCompleted" && run) {
       const finalStatus: RunStatus = event.status === "interrupted" ? "Interrupted" : event.status === "failed" ? "Failed" : "Completed";
       let completed: AgentRun;
-      try { completed = this.store.updateRunStatus(run.id, finalStatus); } catch { return; }
+      try { completed = this.transitionRun(session, run, finalStatus); } catch { return; }
       this.publish({ type: "run.completed", projectId: session.projectId, sessionId: session.id, runId: completed.id, payload: { status: completed.status } });
       return;
     }
     if (event.type === "approvalRequested" && run) {
-      this.publish({ type: "agent.status", projectId: session.projectId, sessionId: session.id, runId: run.id, payload: { status: "WaitingApproval" } });
-      try {
-        await this.provider.rejectApproval(event.approval.binding);
-      } catch {
-        // The run still fails closed if the Provider request was already resolved or the connection was lost.
+      const supported = event.approval.type === "command"
+        ? this.provider.capabilities.commandApproval
+        : event.approval.type === "fileChange"
+          ? this.provider.capabilities.fileChangeApproval
+          : this.provider.capabilities.permissionApproval;
+      if (!supported) {
+        this.publish({ type: "agent.status", projectId: session.projectId, sessionId: session.id, runId: run.id, payload: { status: "WaitingApproval" } });
+        try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
+        await this.failRun(session, run, "APPROVAL_UNSUPPORTED", "This approval type is not supported.");
+        return;
       }
-      await this.failRun(session, run, "APPROVAL_UNSUPPORTED", "Approval is not supported in Phase 1.");
+      try {
+        const existing = this.store.findApprovalByProviderBinding(event.approval.binding);
+        const project = this.store.getProject(session.projectId);
+        const approval = this.store.upsertApproval({
+          type: event.approval.type,
+          projectId: project.id,
+          sessionId: session.id,
+          runId: run.id,
+          availableDecisions: event.approval.availableDecisions,
+          display: approvalDisplay(project, event.approval),
+          binding: event.approval.binding,
+        });
+        if (!existing) {
+          this.publish({
+            type: "approval.requested",
+            projectId: project.id,
+            sessionId: session.id,
+            runId: run.id,
+            payload: {
+              approvalId: approval.id,
+              type: approval.type,
+              status: approval.status,
+              itemId: approval.itemId,
+              availableDecisions: approval.availableDecisions,
+              display: approval.display,
+            },
+          });
+          this.publish({ type: "agent.status", projectId: project.id, sessionId: session.id, runId: run.id, payload: { status: "WaitingApproval" } });
+        }
+      } catch {
+        try { await this.provider.rejectApproval(event.approval.binding); } catch { /* The Provider request is already unavailable. */ }
+        await this.failRun(session, run, "INVALID_APPROVAL", "The approval request did not match the active Run.");
+      }
+      return;
+    }
+    if (event.type === "approvalResolved" && run) {
+      const approval = this.store.findApprovalByProviderBinding(event.approval.binding);
+      if (!approval || approval.status === "Resolved") return;
+      const resolved = this.store.resolveApproval(approval.id, "PROVIDER_RESOLVED");
+      this.publishApprovalResolved(resolved);
+      if (approval.status === "Pending" && ["Queued", "Running", "Interrupting"].includes(this.store.getRun(run.id).status)) {
+        this.publishRunApprovalStatus(session, run);
+      }
       return;
     }
     if (event.type === "providerError" && run) await this.failRun(session, run, "PROVIDER_ERROR", event.message ?? "Codex App Server reported an error.");
@@ -160,8 +252,40 @@ export class GatewayService {
 
   private async failRun(session: AgentSession, run: AgentRun, code: string, message: string): Promise<void> {
     let failed: AgentRun;
-    try { failed = this.store.updateRunStatus(run.id, "Failed"); } catch { return; }
+    try { failed = this.transitionRun(session, run, "Failed"); } catch { return; }
     this.publish({ type: "error", projectId: session.projectId, sessionId: session.id, runId: failed.id, payload: { code, message } });
+  }
+
+  private transitionRun(session: AgentSession, run: AgentRun, status: RunStatus): AgentRun {
+    const unfinished = this.store.listApprovals({ runId: run.id }).filter((approval) => approval.status !== "Resolved");
+    const updated = this.store.updateRunStatus(run.id, status);
+    for (const approval of unfinished) this.publishApprovalResolved(this.store.getApproval(approval.id));
+    return updated;
+  }
+
+  private publishApprovalResolved(approval: Approval): void {
+    this.publish({
+      type: "approval.resolved",
+      projectId: approval.projectId,
+      sessionId: approval.sessionId,
+      runId: approval.runId,
+      payload: {
+        approvalId: approval.id,
+        status: approval.status,
+        resolutionReason: approval.resolutionReason,
+      },
+    });
+  }
+
+  private publishRunApprovalStatus(session: AgentSession, run: AgentRun): void {
+    const waiting = this.store.listApprovals({ runId: run.id, status: "Pending" }).length > 0;
+    this.publish({
+      type: "agent.status",
+      projectId: session.projectId,
+      sessionId: session.id,
+      runId: run.id,
+      payload: { status: waiting ? "WaitingApproval" : "Busy" },
+    });
   }
 
   private publish(event: Omit<AgentEvent, "eventId" | "sequence" | "occurredAt" | "providerId">): void {

@@ -83,6 +83,7 @@ Approval
 
 ProviderApprovalBinding           # adapter/저장소 내부 전용
   providerRequestId
+  providerConnectionId
   providerSessionId
   providerRunId
   providerItemId
@@ -164,11 +165,10 @@ Pending -> Accepted -> Resolved
 ### Gateway/Provider 재시작
 
 - Provider request ID는 연결에 종속되므로 이전 연결의 ID로 결정을 재전송하지 않는다.
-- Gateway 재시작 후 저장된 Pending Approval은 `AwaitingProviderRecovery` 내부 복구 상태로 취급한다.
-- `thread/resume` 뒤 Provider가 동일 Thread/Turn/Item/approval ID의 요청을 다시 발행한 경우에만 새
-  request ID를 바인딩하고 Pending으로 복구한다.
-- Provider가 요청을 재발행하지 않거나 Run 복구를 지원하지 않으면 Approval을 안전하게 `Resolved` 처리하고
-  `PROVIDER_APPROVAL_UNAVAILABLE`을 전달한다. 자동 승인이나 오래된 결정 재생은 하지 않는다.
+- 현재 구현은 Gateway 재시작 시 저장된 미해결 Approval을 즉시 `Resolved` 처리하고
+  `PROVIDER_APPROVAL_UNAVAILABLE` 이벤트를 저장한다. 자동 승인이나 오래된 결정 재생은 하지 않는다.
+- 동일 Approval의 Provider 재발행을 새 request ID로 재바인딩하는 복구는 실제 App Server 재시작 동작을
+  conformance test로 확정한 뒤 별도 확장한다.
 
 ## Security and approval considerations
 
@@ -197,8 +197,9 @@ Pending -> Accepted -> Resolved
   소속 관계를 저장 시 검증한다.
 - [x] 동일 Provider request의 멱등 upsert, 허용 결정의 원자적 단일 claim, Run 종료 시 미해결 Approval
   일괄 resolve를 구현하고 저장소 회귀 테스트를 추가했다.
-- [ ] 외부 승인 capability 활성화는 저장소·결정 API·수직 슬라이스가 함께 동작하는 시점으로 미룬다.
-  부분 구현을 모바일에 사용 가능한 기능처럼 광고하지 않기 위한 조정이다.
+- [x] Approval 조회·결정 API와 `approval.requested/resolved` 이벤트를 기존 인증·sequence replay에 연결했다.
+- [x] Command/File Change의 안전한 표시 변환과 네 가지 결정을 수직 연결하고 두 capability를 활성화했다.
+  Permission capability는 실제 scope·거절 conformance 검증 전까지 비활성 상태를 유지한다.
 
 1. **Codex 계약 fixture와 adapter 경계**
    - 지원 버전 schema에서 세 승인 request/response와 resolved notification fixture를 만든다.
@@ -207,10 +208,10 @@ Pending -> Accepted -> Resolved
 2. **Approval 저장소와 상태 머신** — 완료
    - Approval 및 내부 Provider binding table과 migration을 추가한다.
    - 중복 request upsert, 원자적 decision claim, 관련 Run 종료 시 일괄 resolve를 구현한다.
-3. **Gateway API와 이벤트**
+3. **Gateway API와 이벤트** — 완료
    - 조회·결정 endpoint, 입력/소속/결정 검증, `approval.requested/resolved` 이벤트를 추가한다.
    - 기존 이벤트 replay와 Pending 목록 복구를 연결한다.
-4. **Command/File Change 수직 슬라이스**
+4. **Command/File Change 수직 슬라이스** — 완료
    - 안전한 표시 데이터와 네 가지 기본 결정을 실제 App Server에 매핑한다.
    - accept, acceptForSession, decline, cancel 및 Provider 선해결을 검증한다.
 5. **Permission 수직 슬라이스**
@@ -263,5 +264,5 @@ Pending -> Accepted -> Resolved
 - [x] 인증, 입력 검증, Approval/Session/Run/Item 소속 검증을 계획했다.
 - [x] 이벤트 순서, 중복 UI 방지, 모바일 및 Provider 재연결 동작을 정의했다.
 - [x] 외부 오류와 로그에서 command, 경로, Provider ID, Token을 보호하도록 정의했다.
-- [ ] 구현 시 README와 `.agents/` 계약 문서를 갱신한다.
-- [ ] 구현 시 정상·실패·거절·취소·중복·재연결 테스트를 통과시킨다.
+- [x] 구현 시 README와 `.agents/` 계약 문서를 갱신한다.
+- [x] 구현 시 정상·실패·거절·취소·중복·재연결 자동 테스트를 통과시킨다.

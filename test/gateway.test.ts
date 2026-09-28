@@ -15,10 +15,12 @@ class FakeProvider implements AgentProvider {
   readonly id = "codex" as const;
   readonly capabilities: ProviderCapabilities = {
     resumableSessions: true, eventStreaming: true, interruptRun: true,
-    commandApproval: false, fileChangeApproval: false, permissionApproval: false, workspaceAccess: true,
+    commandApproval: true, fileChangeApproval: true, permissionApproval: false, workspaceAccess: true,
   };
   private listeners = new Set<(event: ProviderEvent) => void>();
   startSessionFailure?: Error;
+  approvalResponseFailure?: Error;
+  approvalResponses: { binding: ProviderApprovalBinding; decision: ApprovalDecision }[] = [];
   rejectedApprovals: ProviderApprovalBinding[] = [];
   async startSession(): Promise<string> {
     if (this.startSessionFailure) throw this.startSessionFailure;
@@ -27,7 +29,10 @@ class FakeProvider implements AgentProvider {
   async resumeSession(): Promise<void> {}
   async startRun(): Promise<StartRunResult> { return { providerRunId: "turn_fake" }; }
   async interruptRun(): Promise<void> {}
-  async respondToApproval(_binding: ProviderApprovalBinding, _decision: ApprovalDecision): Promise<void> {}
+  async respondToApproval(binding: ProviderApprovalBinding, decision: ApprovalDecision): Promise<void> {
+    if (this.approvalResponseFailure) throw this.approvalResponseFailure;
+    this.approvalResponses.push({ binding, decision });
+  }
   async rejectApproval(binding: ProviderApprovalBinding): Promise<void> { this.rejectedApprovals.push(binding); }
   onEvent(listener: (event: ProviderEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   async close(): Promise<void> {}
@@ -46,8 +51,52 @@ async function createGateway() {
   temporaryDirectories.push(directory);
   const store = new GatewayStore(directory);
   const provider = new FakeProvider();
-  return { store, provider, gateway: new GatewayService(store, provider) };
+  return { directory, store, provider, gateway: new GatewayService(store, provider) };
 }
+
+function commandApprovalEvent(details: Partial<Extract<ProviderEvent, { type: "approvalRequested" }>["approval"]["details"]> = {}): Extract<ProviderEvent, { type: "approvalRequested" }> {
+  return {
+    type: "approvalRequested",
+    providerSessionId: "thread_fake",
+    providerRunId: "turn_fake",
+    approval: {
+      type: "command",
+      binding: {
+        providerRequestId: "request_fake",
+        providerConnectionId: "connection_fake",
+        connectionGeneration: 1,
+        providerSessionId: "thread_fake",
+        providerRunId: "turn_fake",
+        providerItemId: "item_fake",
+      },
+      availableDecisions: ["accept", "decline", "cancel"],
+      details: { type: "command", kind: "command", command: "test", ...details },
+    },
+  };
+}
+
+function fileApprovalEvent(grantRoot = process.cwd()): Extract<ProviderEvent, { type: "approvalRequested" }> {
+  return {
+    type: "approvalRequested",
+    providerSessionId: "thread_fake",
+    providerRunId: "turn_fake",
+    approval: {
+      type: "fileChange",
+      binding: {
+        providerRequestId: "request_file",
+        providerConnectionId: "connection_fake",
+        connectionGeneration: 1,
+        providerSessionId: "thread_fake",
+        providerRunId: "turn_fake",
+        providerItemId: "item_file",
+      },
+      availableDecisions: ["accept", "decline", "cancel"],
+      details: { type: "fileChange", grantRoot, reason: "apply requested changes" },
+    },
+  };
+}
+
+const settleEvents = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 function webSocketHandshake(address: string, protocol: string): Promise<string> {
   const url = new URL(address);
@@ -111,32 +160,236 @@ describe("GatewayService", () => {
     store.close();
   });
 
-  it("does not automatically approve a provider approval request", async () => {
+  it("persists a provider approval request without deciding it automatically", async () => {
     const { store, provider, gateway } = await createGateway();
     const project = gateway.createProject("workspace", process.cwd());
     const session = await gateway.startSession(project.id);
     const run = await gateway.startRun(session.id, "needs approval");
+    provider.emit(commandApprovalEvent());
+    await settleEvents();
+
+    expect(store.getRun(run.id).status).toBe("Running");
+    expect(provider.approvalResponses).toHaveLength(0);
+    expect(provider.rejectedApprovals).toHaveLength(0);
+    expect(gateway.listApprovals({ sessionId: session.id, status: "Pending" })).toHaveLength(1);
+    expect(gateway.listEvents(session.id).slice(-2).map((event) => event.type)).toEqual(["approval.requested", "agent.status"]);
+    store.close();
+  });
+
+  it("fails closed for permission approval while that capability is disabled", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    const run = await gateway.startRun(session.id, "needs permission");
     provider.emit({
       type: "approvalRequested",
       providerSessionId: "thread_fake",
       providerRunId: "turn_fake",
       approval: {
-        type: "command",
+        type: "permission",
         binding: {
-          providerRequestId: "request_fake",
+          providerRequestId: "request_permission",
+          providerConnectionId: "connection_fake",
           connectionGeneration: 1,
           providerSessionId: "thread_fake",
           providerRunId: "turn_fake",
-          providerItemId: "item_fake",
+          providerItemId: "item_permission",
         },
-        availableDecisions: ["accept", "decline", "cancel"],
-        details: { type: "command", kind: "command", command: "test" },
+        availableDecisions: [],
+        details: { type: "permission", cwd: process.cwd(), permissions: { network: { enabled: true } } },
       },
     });
-    await new Promise((resolve) => setImmediate(resolve));
+    await settleEvents();
+
     expect(store.getRun(run.id).status).toBe("Failed");
     expect(provider.rejectedApprovals).toHaveLength(1);
+    expect(gateway.listApprovals({ sessionId: session.id })).toHaveLength(0);
     expect(gateway.listEvents(session.id).at(-1)?.payload).toMatchObject({ code: "APPROVAL_UNSUPPORTED" });
+    store.close();
+  });
+
+  it("rejects an approval whose Provider binding does not match the active Run", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    const run = await gateway.startRun(session.id, "invalid approval");
+    const event = commandApprovalEvent();
+    event.approval.binding.providerRunId = "turn_other";
+    provider.emit(event);
+    await settleEvents();
+
+    expect(provider.rejectedApprovals).toHaveLength(1);
+    expect(gateway.listApprovals({ sessionId: session.id })).toHaveLength(0);
+    expect(store.getRun(run.id).status).toBe("Failed");
+    expect(gateway.listEvents(session.id).at(-1)?.payload).toEqual({
+      code: "INVALID_APPROVAL",
+      message: "The approval request did not match the active Run.",
+    });
+    store.close();
+  });
+
+  it("claims a decision once, sends only the internal binding, and resolves on Provider confirmation", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "needs approval");
+    const requestedEvent = commandApprovalEvent();
+    provider.emit(requestedEvent);
+    await settleEvents();
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+
+    const decided = await gateway.decideApproval(approval.id, "decline");
+
+    expect(decided.status).toBe("Declined");
+    expect(provider.approvalResponses).toEqual([{ binding: requestedEvent.approval.binding, decision: "decline" }]);
+    await expect(gateway.decideApproval(approval.id, "accept")).rejects.toMatchObject({ statusCode: 409, code: "CONFLICT" });
+
+    provider.emit({
+      type: "approvalResolved",
+      providerSessionId: "thread_fake",
+      providerRunId: "turn_fake",
+      approval: requestedEvent.approval,
+    });
+    await settleEvents();
+
+    expect(gateway.getApproval(approval.id)).toMatchObject({ status: "Resolved", resolutionReason: "PROVIDER_RESOLVED" });
+    const resolvedEvent = gateway.listEvents(session.id).find((event) => event.type === "approval.resolved");
+    expect(resolvedEvent?.payload).toEqual({
+      approvalId: approval.id,
+      status: "Resolved",
+      resolutionReason: "PROVIDER_RESOLVED",
+    });
+    expect(JSON.stringify(resolvedEvent)).not.toContain("request_fake");
+    store.close();
+  });
+
+  it("normalizes and delivers a File Change decision through the same Gateway contract", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "change a file");
+    const requestedEvent = fileApprovalEvent();
+    provider.emit(requestedEvent);
+    await settleEvents();
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+
+    expect(approval).toMatchObject({ type: "fileChange", display: { type: "fileChange", grantRoot: "." } });
+    await gateway.decideApproval(approval.id, "cancel");
+
+    expect(provider.approvalResponses).toEqual([{ binding: requestedEvent.approval.binding, decision: "cancel" }]);
+    store.close();
+  });
+
+  it("keeps the Run waiting while another Approval is still Pending", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "two approvals");
+    const first = commandApprovalEvent();
+    const second = fileApprovalEvent();
+    provider.emit(first);
+    provider.emit(second);
+    await settleEvents();
+    const approvals = gateway.listApprovals({ sessionId: session.id, status: "Pending" });
+
+    await gateway.decideApproval(approvals[0]!.id, approvals[0]!.availableDecisions[0]!);
+
+    expect(gateway.listEvents(session.id).at(-1)).toMatchObject({
+      type: "agent.status",
+      payload: { status: "WaitingApproval" },
+    });
+    store.close();
+  });
+
+  it("resolves Pending approvals before publishing terminal Run completion", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    const run = await gateway.startRun(session.id, "needs approval");
+    provider.emit(commandApprovalEvent());
+    await settleEvents();
+
+    provider.emit({ type: "runCompleted", providerSessionId: "thread_fake", providerRunId: "turn_fake", status: "completed" });
+    await settleEvents();
+
+    expect(gateway.listApprovals({ sessionId: session.id })[0]).toMatchObject({
+      status: "Resolved",
+      resolutionReason: "RUN_COMPLETED",
+    });
+    const finalEvents = gateway.listEvents(session.id).slice(-2);
+    expect(finalEvents.map((event) => event.type)).toEqual(["approval.resolved", "run.completed"]);
+    expect(store.getRun(run.id).status).toBe("Completed");
+    store.close();
+  });
+
+  it("closes a Pending approval when the Provider resolves it first", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "provider resolves first");
+    const requestedEvent = commandApprovalEvent();
+    provider.emit(requestedEvent);
+    await settleEvents();
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+
+    provider.emit({
+      type: "approvalResolved",
+      providerSessionId: "thread_fake",
+      providerRunId: "turn_fake",
+      approval: requestedEvent.approval,
+    });
+    await settleEvents();
+
+    expect(gateway.getApproval(approval.id)).toMatchObject({ status: "Resolved", resolutionReason: "PROVIDER_RESOLVED" });
+    await expect(gateway.decideApproval(approval.id, "accept")).rejects.toMatchObject({ statusCode: 409, code: "CONFLICT" });
+    store.close();
+  });
+
+  it("resolves stale Pending approvals on Gateway restart without replaying Provider request IDs", async () => {
+    const { directory, store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "restart while pending");
+    provider.emit(commandApprovalEvent());
+    await settleEvents();
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+    store.close();
+
+    const recoveredStore = new GatewayStore(directory);
+    const recoveredProvider = new FakeProvider();
+    const recoveredGateway = new GatewayService(recoveredStore, recoveredProvider);
+
+    expect(recoveredGateway.getApproval(approval.id)).toMatchObject({
+      status: "Resolved",
+      resolutionReason: "PROVIDER_APPROVAL_UNAVAILABLE",
+    });
+    await expect(recoveredGateway.decideApproval(approval.id, "accept")).rejects.toMatchObject({ statusCode: 409, code: "CONFLICT" });
+    expect(recoveredProvider.approvalResponses).toHaveLength(0);
+    expect(recoveredGateway.listEvents(session.id).at(-1)?.type).toBe("approval.resolved");
+    recoveredStore.close();
+  });
+
+  it("resolves the claim and fails the Run when the Provider response cannot be delivered", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    const run = await gateway.startRun(session.id, "needs approval");
+    provider.emit(commandApprovalEvent());
+    await settleEvents();
+    const approval = gateway.listApprovals({ sessionId: session.id, status: "Pending" })[0]!;
+    provider.approvalResponseFailure = new Error("Bearer secret C:\\Users\\private");
+
+    await expect(gateway.decideApproval(approval.id, "accept")).rejects.toMatchObject({
+      statusCode: 503,
+      code: "PROVIDER_UNAVAILABLE",
+    });
+
+    expect(gateway.getApproval(approval.id)).toMatchObject({
+      status: "Resolved",
+      resolutionReason: "PROVIDER_RESPONSE_FAILED",
+    });
+    expect(store.getRun(run.id).status).toBe("Failed");
+    expect(JSON.stringify(gateway.listEvents(session.id))).not.toContain("secret");
     store.close();
   });
 });
@@ -235,6 +488,75 @@ describe("HTTP boundary", () => {
     });
     expect(response.statusCode).toBe(201);
     expect(response.json()).not.toHaveProperty("providerSessionId");
+    await app.close();
+    store.close();
+  });
+
+  it("lists and decides approvals without exposing Provider IDs or sensitive display text", async () => {
+    const { store, provider, gateway } = await createGateway();
+    const project = gateway.createProject("workspace", process.cwd());
+    const session = await gateway.startSession(project.id);
+    await gateway.startRun(session.id, "needs approval");
+    const requestedEvent = commandApprovalEvent({
+      command: `npm --token supersecret --prefix "${process.cwd()}" test`,
+      cwd: join(process.cwd(), "src"),
+      reason: "Authorization: Bearer topsecret\nneeds access",
+    });
+    provider.emit(requestedEvent);
+    await settleEvents();
+    const app = await buildApp({ config, gateway });
+    const authorization = { authorization: `Bearer ${token}` };
+
+    expect((await app.inject({ method: "GET", url: "/approvals" })).statusCode).toBe(401);
+    const listResponse = await app.inject({
+      method: "GET",
+      url: `/approvals?sessionId=${session.id}&status=Pending`,
+      headers: authorization,
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const approvals = listResponse.json();
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({
+      type: "command",
+      status: "Pending",
+      itemId: expect.stringMatching(/^itm_[a-f0-9]{32}$/),
+      display: { type: "command", kind: "command", cwd: "src" },
+    });
+    expect(JSON.stringify(approvals)).not.toMatch(/request_fake|connection_fake|thread_fake|turn_fake|supersecret|topsecret/i);
+    expect(JSON.stringify(approvals)).not.toContain(process.cwd());
+    const getResponse = await app.inject({
+      method: "GET",
+      url: `/approvals/${approvals[0].id}`,
+      headers: authorization,
+    });
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json()).toEqual(approvals[0]);
+
+    const invalidResponse = await app.inject({
+      method: "POST",
+      url: `/approvals/${approvals[0].id}/decision`,
+      headers: authorization,
+      payload: { decision: "approveEverything" },
+    });
+    expect(invalidResponse.statusCode).toBe(400);
+    const unavailableResponse = await app.inject({
+      method: "POST",
+      url: `/approvals/${approvals[0].id}/decision`,
+      headers: authorization,
+      payload: { decision: "acceptForSession" },
+    });
+    expect(unavailableResponse.statusCode).toBe(400);
+
+    const decisionResponse = await app.inject({
+      method: "POST",
+      url: `/approvals/${approvals[0].id}/decision`,
+      headers: authorization,
+      payload: { decision: "decline" },
+    });
+    expect(decisionResponse.statusCode).toBe(200);
+    expect(decisionResponse.json()).toMatchObject({ id: approvals[0].id, status: "Declined" });
+    expect(provider.approvalResponses).toEqual([{ binding: requestedEvent.approval.binding, decision: "decline" }]);
+
     await app.close();
     store.close();
   });

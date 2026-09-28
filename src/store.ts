@@ -9,6 +9,7 @@ import type {
   AgentSession,
   Approval,
   ApprovalDecision,
+  ApprovalDisplay,
   ApprovalStatus,
   ApprovalType,
   Project,
@@ -39,7 +40,7 @@ interface ApprovalRow {
   decided_at: string | null; resolved_at: string | null; resolution_reason: string | null;
 }
 interface ProviderApprovalBindingRow {
-  approval_id: string; provider_request_id: string; connection_generation: number; provider_session_id: string;
+  approval_id: string; provider_request_id: string; provider_connection_id: string; connection_generation: number; provider_session_id: string;
   provider_run_id: string; provider_item_id: string; provider_approval_id: string | null;
 }
 
@@ -48,9 +49,8 @@ export interface CreateApprovalInput {
   projectId: string;
   sessionId: string;
   runId: string;
-  itemId: string;
   availableDecisions: ApprovalDecision[];
-  display: Record<string, unknown>;
+  display: ApprovalDisplay;
   binding: ProviderApprovalBinding;
   requestedAt?: string;
 }
@@ -83,7 +83,7 @@ const approvalFrom = (row: ApprovalRow): Approval => ({
   runId: row.run_id,
   itemId: row.item_id,
   availableDecisions: JSON.parse(row.available_decisions) as ApprovalDecision[],
-  display: JSON.parse(row.display) as Record<string, unknown>,
+  display: JSON.parse(row.display) as ApprovalDisplay,
   requestedAt: row.requested_at,
   ...(row.decided_at ? { decidedAt: row.decided_at } : {}),
   ...(row.resolved_at ? { resolvedAt: row.resolved_at } : {}),
@@ -91,6 +91,7 @@ const approvalFrom = (row: ApprovalRow): Approval => ({
 });
 const bindingFrom = (row: ProviderApprovalBindingRow): ProviderApprovalBinding => ({
   providerRequestId: JSON.parse(row.provider_request_id) as ProviderRequestId,
+  providerConnectionId: row.provider_connection_id,
   connectionGeneration: row.connection_generation,
   providerSessionId: row.provider_session_id,
   providerRunId: row.provider_run_id,
@@ -153,14 +154,22 @@ export class GatewayStore {
       CREATE TABLE IF NOT EXISTS provider_approval_bindings (
         approval_id TEXT PRIMARY KEY REFERENCES approvals(id) ON DELETE CASCADE,
         provider_request_id TEXT NOT NULL,
+        provider_connection_id TEXT NOT NULL,
         connection_generation INTEGER NOT NULL,
         provider_session_id TEXT NOT NULL,
         provider_run_id TEXT NOT NULL,
         provider_item_id TEXT NOT NULL,
         provider_approval_id TEXT
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS provider_approval_request
-        ON provider_approval_bindings(connection_generation, provider_request_id);
+    `);
+    const bindingColumns = this.database.pragma("table_info(provider_approval_bindings)") as { name: string }[];
+    if (!bindingColumns.some((column) => column.name === "provider_connection_id")) {
+      this.database.exec("ALTER TABLE provider_approval_bindings ADD COLUMN provider_connection_id TEXT NOT NULL DEFAULT 'legacy'");
+    }
+    this.database.exec(`
+      DROP INDEX IF EXISTS provider_approval_request;
+      CREATE UNIQUE INDEX provider_approval_request
+        ON provider_approval_bindings(provider_connection_id, connection_generation, provider_request_id);
     `);
   }
 
@@ -276,18 +285,34 @@ export class GatewayStore {
     return bindingFrom(row);
   }
 
+  findApprovalByProviderBinding(binding: ProviderApprovalBinding): Approval | undefined {
+    const row = this.database.prepare(`
+      SELECT approvals.* FROM approvals
+      JOIN provider_approval_bindings ON provider_approval_bindings.approval_id = approvals.id
+      WHERE provider_approval_bindings.provider_request_id = ?
+        AND provider_approval_bindings.provider_connection_id = ?
+        AND provider_approval_bindings.connection_generation = ?
+        AND provider_approval_bindings.provider_session_id = ?
+        AND provider_approval_bindings.provider_run_id = ?
+        AND provider_approval_bindings.provider_item_id = ?
+        AND provider_approval_bindings.provider_approval_id IS ?
+    `).get(
+      JSON.stringify(binding.providerRequestId), binding.providerConnectionId, binding.connectionGeneration, binding.providerSessionId,
+      binding.providerRunId, binding.providerItemId, binding.providerApprovalId ?? null,
+    ) as ApprovalRow | undefined;
+    return row ? approvalFrom(row) : undefined;
+  }
+
   upsertApproval(input: CreateApprovalInput): Approval {
     const availableDecisions = [...new Set(input.availableDecisions)];
     if (availableDecisions.some((decision) => !APPROVAL_DECISIONS.has(decision))) {
       throw invalidRequest("Approval includes an unsupported decision.");
     }
-    if (!Number.isInteger(input.binding.connectionGeneration) || input.binding.connectionGeneration < 1
+    if (!input.binding.providerConnectionId
+      || !Number.isInteger(input.binding.connectionGeneration) || input.binding.connectionGeneration < 1
       || (typeof input.binding.providerRequestId === "number" && !Number.isFinite(input.binding.providerRequestId))
       || !input.binding.providerSessionId || !input.binding.providerRunId || !input.binding.providerItemId) {
       throw invalidRequest("Approval Provider binding is invalid.");
-    }
-    if (!input.itemId || input.itemId !== input.binding.providerItemId) {
-      throw conflict("Approval item ownership does not match the Provider binding.");
     }
     const providerRequestId = JSON.stringify(input.binding.providerRequestId);
     const upsert = this.database.transaction(() => {
@@ -303,8 +328,8 @@ export class GatewayStore {
 
       const existingBinding = this.database.prepare(`
         SELECT * FROM provider_approval_bindings
-        WHERE connection_generation = ? AND provider_request_id = ?
-      `).get(input.binding.connectionGeneration, providerRequestId) as ProviderApprovalBindingRow | undefined;
+        WHERE provider_connection_id = ? AND connection_generation = ? AND provider_request_id = ?
+      `).get(input.binding.providerConnectionId, input.binding.connectionGeneration, providerRequestId) as ProviderApprovalBindingRow | undefined;
       if (existingBinding) {
         const existing = this.getApproval(existingBinding.approval_id);
         const storedBinding = bindingFrom(existingBinding);
@@ -312,7 +337,6 @@ export class GatewayStore {
           || existing.projectId !== input.projectId
           || existing.sessionId !== input.sessionId
           || existing.runId !== input.runId
-          || existing.itemId !== input.itemId
           || JSON.stringify(existing.availableDecisions) !== JSON.stringify(availableDecisions)
           || JSON.stringify(existing.display) !== JSON.stringify(input.display)
           || !sameProviderBinding(storedBinding, input.binding)) {
@@ -330,7 +354,7 @@ export class GatewayStore {
         projectId: input.projectId,
         sessionId: input.sessionId,
         runId: input.runId,
-        itemId: input.itemId,
+        itemId: gatewayId("itm"),
         availableDecisions,
         display: input.display,
         requestedAt,
@@ -346,11 +370,11 @@ export class GatewayStore {
       );
       this.database.prepare(`
         INSERT INTO provider_approval_bindings (
-          approval_id, provider_request_id, connection_generation, provider_session_id,
+          approval_id, provider_request_id, provider_connection_id, connection_generation, provider_session_id,
           provider_run_id, provider_item_id, provider_approval_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        approval.id, providerRequestId, input.binding.connectionGeneration, input.binding.providerSessionId,
+        approval.id, providerRequestId, input.binding.providerConnectionId, input.binding.connectionGeneration, input.binding.providerSessionId,
         input.binding.providerRunId, input.binding.providerItemId, input.binding.providerApprovalId ?? null,
       );
       return approval;
@@ -426,6 +450,7 @@ export class GatewayStore {
 
 function sameProviderBinding(left: ProviderApprovalBinding, right: ProviderApprovalBinding): boolean {
   return left.providerRequestId === right.providerRequestId
+    && left.providerConnectionId === right.providerConnectionId
     && left.connectionGeneration === right.connectionGeneration
     && left.providerSessionId === right.providerSessionId
     && left.providerRunId === right.providerRunId

@@ -22,7 +22,8 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 
 - Codex adapter는 승인 server request를 정확한 method 이름으로만 구분하며, 필수 Thread/Turn/Item과
   요청 시작 시각이 없는 payload는 안전한 JSON-RPC 오류로 거절한다.
-- Provider request ID는 App Server 연결 세대와 함께 묶는다. 이전 연결의 ID로 성공·오류 응답을 보내지 않는다.
+- Provider request ID는 Gateway 프로세스별 연결 인스턴스 ID와 App Server 연결 세대에 함께 묶는다.
+  프로세스 재시작으로 세대 숫자가 다시 시작돼도 이전 연결의 ID와 충돌하거나 성공·오류 응답을 보내지 않는다.
 - `turn/start` 응답과 승인 요청이 같은 stream chunk로 도착해도 Gateway가 Turn ID를 저장한 뒤 승인 요청을
   처리하도록 시작 중인 Run의 Provider 이벤트를 잠시 보관한다. 응답의 Turn ID와 다른 승인 요청은 거절한다.
 - Command와 File Change는 schema에 정의된 `accept`, `acceptForSession`, `decline`, `cancel`만 응답할 수 있다.
@@ -31,13 +32,20 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 - Permission 요청/응답 fixture와 안전한 오류 경로는 존재하지만, 실제 scope·거절 conformance 검증 전까지
   capability를 활성화하지 않는다.
 - Gateway는 Provider 중립 `apr_` Approval과 Provider 원본 binding을 별도 SQLite table에 저장한다.
-  동일 연결 세대와 request ID의 동일 요청은 기존 Approval을 반환하고, 다른 소속이나 내용으로 재사용하면 거부한다.
+  동일 연결 인스턴스·세대와 request ID의 동일 요청은 기존 Approval을 반환하고, 다른 소속이나 내용으로 재사용하면 거부한다.
 - decision claim은 SQLite transaction에서 `Pending` 상태를 한 번만 변경한다. Provider가 허용하지 않은 결정,
   중복 결정, 종료된 Run의 결정은 거부한다.
 - Run이 `Completed`, `Interrupted`, `Failed`로 전이하면 해당 Run의 미해결 Approval을 같은 transaction에서
   `Resolved`로 종료한다.
-- 모바일 결정 API가 아직 없으므로 Gateway는 Provider 요청을 자동 승인하지 않고 안전한 오류로 응답한 뒤
-  기존 Phase 1 실패 이벤트를 유지한다. 외부 승인 capability도 계속 `false`다.
+- Command와 File Change는 `approval.requested` 이벤트와 조회 API로 노출하며 capability가 활성화돼 있다.
+  표시용 command, cwd, reason, grant root는 길이·제어문자·secret·개인 경로를 정리하고 Project 기준 경로로 변환한다.
+- 모바일 결정 API는 허용 목록과 Pending 상태를 검증한 뒤 내부 binding으로 Provider response를 한 번만 전달한다.
+  성공 후 `Busy`, Provider 확인·Run 종료·전달 실패 후 `approval.resolved`를 발행한다.
+- Provider response 전달 실패는 결정을 Pending으로 되돌리지 않고 `PROVIDER_RESPONSE_FAILED`로 resolve한 뒤
+  Run을 실패 처리한다. Provider가 먼저 해결한 요청도 `PROVIDER_RESOLVED`로 종료해 재사용을 막는다.
+- Gateway 재시작 시 저장된 미해결 Approval은 `PROVIDER_APPROVAL_UNAVAILABLE`로 resolve하고 이벤트를 저장한다.
+  현재 버전은 이전 Provider request를 재바인딩하거나 결정을 재생하지 않는다.
+- Permission approval은 실제 scope·거절 conformance 검증 전까지 capability가 `false`이며 안전하게 거절한다.
 
 ## 금지 사항
 
