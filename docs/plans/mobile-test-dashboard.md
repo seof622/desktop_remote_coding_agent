@@ -13,11 +13,12 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - Token 입력 후 Health, Provider, Project, Session, Run, interrupt API 제어
 - 정규화된 Gateway Event를 실시간 표시하고 `agent.message.delta`를 Run별 답변으로 누적
 - 브라우저 WebSocket의 제약을 위해 `Sec-WebSocket-Protocol: gateway-v1.<token>` 인증 지원
+- Command/File Change Pending 카드와 허용된 결정 버튼, 재연결 시 승인 목록 복구
 
 ### Non-goals
 
 - Token 저장, device pairing, 사용자 계정, 다중 사용자 UI
-- Phase 2 Approval 결정, Git/Build/Test 제어, Provider 원본 ID 표시
+- Permission capability 활성화, Git/Build/Test 제어, Provider 원본 ID 표시
 - 제품 수준 모바일 앱 또는 외부 CDN/analytics
 
 ## Affected boundaries
@@ -34,6 +35,10 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - 선택 Session의 마지막 sequence를 메모리에 보존하고 재연결 시 `afterSequence`로 이어받는다.
 - 동일 Run의 메시지 delta는 하나의 답변 카드에 누적하고, Session을 바꾸면 기존 답변 표시를 분리한다.
 - Run은 기존 Gateway 상태 전이와 단일 활성 Run 제약을 그대로 따른다.
+- 승인 이벤트·연결·새로고침 시 최신 Pending 목록을 조회한다. 과거 이벤트를 카드로 직접 재생하지 않는다.
+- Session 전환·Token 제거·더 최신 조회 후 도착한 응답은 무시한다. Token 제거 시 화면 데이터를 지운다.
+- 결정 중 해당 카드 버튼을 잠그고 결과와 무관하게 상태를 재조회한다. 자동 결정 재전송은 하지 않는다.
+- 조회 실패 또는 WebSocket 종료 시 결정을 잠그고 목록 새로고침으로 복구한다.
 
 ## Security and approval considerations
 
@@ -66,3 +71,5 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - [x] 정상·잘못된 Token WebSocket 인증을 자동 테스트했다.
 - [x] Tailscale 스마트폰에서 Run 스트리밍과 interrupt를 확인하고, 네트워크 복구 후 페이지의
   `목록 새로고침`으로 WebSocket을 다시 연결해 `afterSequence` 이후 이벤트가 이어지는 것을 검증했다.
+- [x] 대시보드 script 자동 테스트로 안전한 상세, 허용 결정, 중복 클릭, 응답 경합과 실패 복구를 검증했다.
+- [ ] 승인 UI의 실제 Codex·Tailscale 스마트폰 수락·거절·취소·재연결을 검증한다.

@@ -402,7 +402,11 @@ Tailscale에 연결된 스마트폰에서 `http://<Gateway-Tailscale-IP>:8787/da
 
 Dashboard의 REST 요청은 Bearer 인증을 사용한다. 브라우저 WebSocket은 임의 `Authorization` 헤더를 설정할 수
 없으므로 `Sec-WebSocket-Protocol: gateway-v1.<base64url(Client Token)>`으로 인증한다. Token을 URL이나
-브라우저 저장소에 넣지 않는다. 이 화면은 검증용이며 Approval, Git, Build/Test 제어는 지원하지 않는다.
+브라우저 저장소에 넣지 않는다. 이 화면은 검증용이며 Command/File Change 승인 UI를 제공한다.
+선택 Session의 대기 요청을 표시하며, Session 선택 전에는 전체 요청을 보여준다. 서버가 허용한 결정만
+버튼으로 제공하고 결정 중 중복 클릭을 차단한다. 이벤트 수신·재연결·결정 후 최신 Pending 목록을 조회해
+종료된 요청의 과거 replay를 카드로 되살리지 않는다. 조회 실패 또는 연결 종료 시 버튼을 잠그며
+`목록 새로고침`으로 복구한다. 결정은 자동 재전송하지 않는다. Git, Build/Test 제어는 지원하지 않는다.
 
 ### REST
 
@@ -467,8 +471,9 @@ Session별 최근 1,000개 및 7일 이내 이벤트만 보존하므로 범위 �
 Command와 File Change approval은 요청을 SQLite에 먼저 저장한 뒤 `approval.requested`를 발행한다.
 결정은 한 번만 원자적으로 claim하고 Codex App Server에 정확한 JSON-RPC response를 전달한다.
 `serverRequest/resolved`, Run 종료 또는 Provider response 전달 실패 시 `approval.resolved`를 발행한다.
-모바일 재연결 시 기존 이벤트 replay와 Pending Approval 조회를 함께 사용한다. 현재 Dashboard에는 Approval UI가
-없으므로 REST/WebSocket 클라이언트로만 검증할 수 있다. Gateway 재시작 시 이전 연결의 미해결 Approval은
+모바일 재연결 시 기존 이벤트 replay와 Pending Approval 조회를 함께 사용한다. Dashboard에서 Command/File Change
+요청과 허용된 결정을 확인할 수 있다. UI 자동 테스트는 통과했으며 실제 Codex·스마트폰 승인 검증은 후속 작업이다.
+Gateway 재시작 시 이전 연결의 미해결 Approval은
 `PROVIDER_APPROVAL_UNAVAILABLE`로 종료하며 오래된 Provider request ID를 재생하지 않는다. Permission approval은
 자동 수락하지 않고 안전하게 실패한다.
 

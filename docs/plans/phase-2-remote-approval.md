@@ -218,8 +218,9 @@ Pending -> Accepted -> Resolved
    - 요청 permission을 정규화하고 동일 범위만 turn/session scope로 응답한다.
    - 거절·취소와 재시작 복구 동작을 실제 App Server에서 확인한 뒤 capability를 활성화한다.
 6. **모바일 테스트 대시보드와 실기기 검증**
-   - Pending 카드, 안전한 상세, 허용된 결정 버튼, 중복 클릭 방지를 추가한다.
-   - Tailscale 스마트폰에서 요청·수락·거절·취소·재연결을 검증한다.
+   - 완료: Pending 카드, 안전한 상세, 허용된 결정 버튼, 중복 클릭 방지와 최신 목록 기반 재연결 복구.
+   - 완료: 대시보드 script 자동 테스트로 오래된 조회·socket callback, 종료된 승인 replay, 실패 복구를 검증.
+   - 미수행: 실제 Codex·Tailscale 스마트폰에서 요청·수락·세션 승인·거절·취소·재연결 검증.
 
 ## Test plan
 

@@ -46,6 +46,10 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 - Gateway 재시작 시 저장된 미해결 Approval은 `PROVIDER_APPROVAL_UNAVAILABLE`로 resolve하고 이벤트를 저장한다.
   현재 버전은 이전 Provider request를 재바인딩하거나 결정을 재생하지 않는다.
 - Permission approval은 실제 scope·거절 conformance 검증 전까지 capability가 `false`이며 안전하게 거절한다.
+- Dashboard는 서버가 마스킹한 `display`를 텍스트로 표시하고 `availableDecisions` 중 지원하는 결정만 제공한다.
+  결정 중 버튼을 잠그며 자동 재전송하지 않는다. 연결·승인 이벤트·결정 결과 뒤 Pending 목록을 재조회한다.
+  과거 replay로 종료된 카드를 재생하지 않으며, Session/Token 전환 후 늦은 응답은 무시한다.
+  상태 조회 실패 또는 socket 종료 시 결정 버튼을 잠그고 목록 새로고침으로 복구한다.
 
 ## 금지 사항
 
