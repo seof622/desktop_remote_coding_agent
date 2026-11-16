@@ -104,6 +104,11 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       for (const [key, label] of [["command", "명령"], ["cwd", "작업 위치"], ["grantRoot", "변경 허용 위치"], ["reason", "사유"]]) {
         if (typeof display[key] === "string") lines.push(label + ": " + display[key]);
       }
+      if (display.type === "permission") {
+        lines.push("네트워크: " + (display.networkEnabled === true ? "접근 요청" : "추가 접근 없음"));
+        for (const entry of display.filesystemEntries || []) if (typeof entry === "string") lines.push("파일 권한: " + entry);
+        lines.push("권한 승인은 현재 비활성 상태입니다.");
+      }
       const text = document.createElement("pre"); text.textContent = lines.join("\n") || "추가 표시 정보 없음";
       const buttons = document.createElement("div"); buttons.className = "row";
       for (const decision of new Set(approval.availableDecisions || [])) {

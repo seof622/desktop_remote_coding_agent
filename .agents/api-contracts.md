@@ -61,3 +61,8 @@ MVP의 대표 이벤트는 `agent.status`, `session.started`, `run.started`,
   `approval.resolved`를 replay 가능한 이벤트로 저장한다. 이전 request ID로 결정을 재전송하지 않는다.
 - Command와 File Change capability는 활성화한다. Permission capability는 실제 scope·거절 conformance 검증
   전까지 비활성화하며 자동 수락하지 않는다.
+- Permission의 기존 display variant는 `filesystemEntries: string[]`, `networkEnabled: boolean`, 선택적
+  `reason`을 유지한다. filesystemEntries는 접근 모드가 포함된 안전한 표시 문자열이며 Provider의
+  `fileSystem.entries` 및 legacy read/write를 읽는다. 원본 profile·개인 경로는 외부에 노출하지 않는다.
+- `0.159.3` 실제 프로토콜의 빈 profile 거절과 scope 응답 검증은 통과했다. sandbox 권한의 실제 적용·만료
+  검증은 완료되지 않았으므로 Permission capability는 계속 false다.

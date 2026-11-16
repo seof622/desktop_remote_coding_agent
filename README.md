@@ -472,10 +472,57 @@ Command와 File Change approval은 요청을 SQLite에 먼저 저장한 뒤 `app
 결정은 한 번만 원자적으로 claim하고 Codex App Server에 정확한 JSON-RPC response를 전달한다.
 `serverRequest/resolved`, Run 종료 또는 Provider response 전달 실패 시 `approval.resolved`를 발행한다.
 모바일 재연결 시 기존 이벤트 replay와 Pending Approval 조회를 함께 사용한다. Dashboard에서 Command/File Change
-요청과 허용된 결정을 확인할 수 있다. UI 자동 테스트는 통과했으며 실제 Codex·스마트폰 승인 검증은 후속 작업이다.
+요청과 허용된 결정을 확인할 수 있다. UI 자동 테스트와 아래 로컬 fixture 연동 검증은 통과했으며,
+실제 모델·스마트폰 승인 검증은 후속 작업이다.
 Gateway 재시작 시 이전 연결의 미해결 Approval은
 `PROVIDER_APPROVAL_UNAVAILABLE`로 종료하며 오래된 Provider request ID를 재생하지 않는다. Permission approval은
 자동 수락하지 않고 안전하게 실패한다.
+
+### Permission 승인 검증
+
+`npm run verify:permissions`는 설치된 Codex App Server와 loopback Responses fixture를 사용한다.
+독립 임시 `CODEX_HOME`과 ephemeral Thread를 사용하며 실제 모델 호출·계정 인증·사용자 프로젝트 수정은 하지 않는다.
+실행 파일을 찾지 못하면 `CODEX_CONFORMANCE_COMMAND`에 Codex 실행 파일을 지정한다.
+
+`codex-cli 0.159.3`에서 빈 Permission profile의 무권한 결과, 요청 profile 그대로의 turn/session scope 응답,
+다음 Turn 및 별도 Session의 요청 처리, Pending 중 interrupt를 확인했다. `request_permissions_tool` feature는
+검증 프로세스에서만 활성화한다. 기본 검증 성공은 실제 sandbox 권한 적용·만료가 검증됐다는 뜻이 아니다.
+
+`npm run verify:permissions -- --enforcement`는 독립 임시 폴더의 marker 쓰기로 filesystem 권한 거절,
+turn 만료, session 유지 및 별도 Session 분리를 추가 검사한다. 명령의 시작·종료 출력과 실제 marker를 함께
+확인하며, 추가 명령 승인 또는 프로세스 실행 실패는 권한 거절 성공으로 세지 않는다. 외부 사이트에 접속하지 않으며
+네트워크 권한 적용은 검증하지 않는다. 현재 Windows 격리 환경에서는 별도 명령 승인이 요구되어
+`command-approval-required`로 실패했다. 일반 WSL 배포판도 확인되지 않아 capability는 `false`를
+유지한다. Windows sandbox 설정 또는 적절한 검증 환경이 필요하며 network 권한의 실제 적용은 별도 검증해야 한다.
+검증 도구는 OS sandbox 설정을 자동 변경하거나 명령 승인을 자동 수락하지 않는다.
+
+기존 sandbox를 임시 프로세스에만 지정한 `--enforcement --windows-sandbox=unelevated`에서는 무권한
+파일 쓰기 거절을 확인했지만, 권한 승인 후 분리된 쓰기 root를 적용하는 실행이 sandbox에서 거부되었다.
+도구는 이를 `sandbox-layout-unsupported`로 실패 처리한다. 설정 저장·관리자 setup은 수행하지 않았으며,
+이 결과는 승인 후 권한 적용·만료·세션 유지의 검증 완료를 의미하지 않는다.
+
+권한 표시 데이터는 Codex의 `fileSystem.entries`와 legacy `read`/`write`를 읽어 접근 모드·특수 범위를 표시한다.
+개인 경로는 Project 상대 경로 또는 `<outside-workspace>`로 변환하며, Dashboard는 이를 텍스트로 표시한다.
+
+### 실제 Gateway 연동 검증
+
+`npm run verify:gateway`는 실제 App Server와 독립 loopback inference fixture를 Gateway HTTP/WebSocket에
+연결한다. 임시 CODEX_HOME·Workspace·SQLite DB와 메모리에서 생성한 Client Token을 사용한다. 실제 모델 호출,
+사용자 자격 증명 사용, OS 설정 변경, 명령·파일 변경 승인 수락은 하지 않는다. fixture 모델 식별자는 도구
+카탈로그를 선택하기 위한 `gpt-6.1-sol`이며, 응답은 모두 로컬 fixture가 생성한다.
+
+`2026-10-21`, `codex-cli 0.163.0`에서 다음 검증을 통과했다.
+
+- 명령 취소 및 제공되지 않은 `decline` 결정의 `400` 거부 (해당 요청의 허용 목록은 accept/cancel).
+- 파일 변경 거절·취소, 중복 결정의 `409` 거부, 실시간 승인 이벤트와 브라우저 WebSocket 재연결 replay.
+- 승인 대기 중 interrupt와 Pending 정리, Permission 미지원 요청의 `APPROVAL_UNSUPPORTED` 실패 처리.
+- Gateway 상태 재시작 후 오래된 승인 종료·결정 거부·해결 이벤트 replay 및 새 Provider 연결의 승인 처리.
+- 승인·이벤트의 Token, Provider binding 및 fixture 절대 경로 비노출. 명령·파일 변경 marker 미생성.
+
+출력의 `summary.coverage`와 `skipped`를 함께 확인한다. 런타임이 파일 변경 도구를 제공하지 않으면 그 검증을
+미수행으로 표시한다. 명령 수락·세션 수락의 실제 실행, Permission의 실제 권한 적용, 실제 모델 및 Tailscale
+스마트폰 화면 검증은 이 도구의 성공 범위에 포함하지 않는다. PowerShell 실행 정책이 npm.ps1을 차단하면
+`npm.cmd run verify:gateway`처럼 npm.cmd를 사용한다. `npm run typecheck`는 검증 스크립트도 검사한다.
 
 ---
 

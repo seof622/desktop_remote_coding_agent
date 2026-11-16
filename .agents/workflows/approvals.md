@@ -46,6 +46,16 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 - Gateway 재시작 시 저장된 미해결 Approval은 `PROVIDER_APPROVAL_UNAVAILABLE`로 resolve하고 이벤트를 저장한다.
   현재 버전은 이전 Provider request를 재바인딩하거나 결정을 재생하지 않는다.
 - Permission approval은 실제 scope·거절 conformance 검증 전까지 capability가 `false`이며 안전하게 거절한다.
+- `0.159.3`에서 loopback inference로 빈 profile의 무권한 결과, 요청 profile의 turn/session 응답과 interrupt를
+  확인했다. 실제 Windows scope 적용 검증은 별도 명령 승인이 요구되어 실패했으므로 capability는 false를 유지한다.
+  프로토콜 검증 성공을 실제 권한 enforcement 검증으로 취급하지 않는다.
+- Permission 표시 데이터는 `fileSystem.entries` 및 legacy read/write 접근 모드를 포함하며 경로를 마스킹한다.
+  알 수 없는 entry는 표시에서 조용히 누락하지 않고 알 수 없는 범위로 표현한다.
+- 실제 연동 검증은 `npm run verify:gateway`로 재실행한다. `0.163.0`에서 명령 취소·미제공 decline 거부,
+  파일 변경 거절·취소·중복 결정·Pending interrupt·재연결 replay·Permission 미지원 실패·재시작 복구를 확인했다.
+  명령 수락/세션 수락, 실제 모델, 스마트폰 및 Permission enforcement의 검증 완료로 해석하지 않는다.
+- filesystem enforcement는 marker 미생성과 명령 실행의 시작·종료 증거를 함께 확인한다.
+  별도 Command Approval 차단이나 프로세스 시작 실패는 권한 거절 성공이 아닌 미검증 실패다.
 - Dashboard는 서버가 마스킹한 `display`를 텍스트로 표시하고 `availableDecisions` 중 지원하는 결정만 제공한다.
   결정 중 버튼을 잠그며 자동 재전송하지 않는다. 연결·승인 이벤트·결정 결과 뒤 Pending 목록을 재조회한다.
   과거 replay로 종료된 카드를 재생하지 않으며, Session/Token 전환 후 늦은 응답은 무시한다.

@@ -16,7 +16,8 @@ class Element {
   replaceChildren() { this.children = []; this.textContent = ""; }
 }
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const pending = (id = "apr_one", sessionId = "ses_one") => ({
+interface MockApproval { id: string; sessionId: string; runId: string; type: string; status: string; display: Record<string, unknown>; availableDecisions: string[] }
+const pending = (id = "apr_one", sessionId = "ses_one"): MockApproval => ({
   id, sessionId, runId: "run_one", type: "command", status: "Pending",
   display: { command: "<img src=x onerror=alert(1)>", cwd: "src", reason: "test" },
   availableDecisions: ["accept", "decline", "unknown"],
@@ -66,6 +67,17 @@ function harness() {
 }
 
 describe("dashboard approvals", () => {
+  it("shows permission access modes and network requests as text without inventing decisions", async () => {
+    const h = harness(); h.setApprovals([{ ...pending(), type: "permission", availableDecisions: [], display: {
+      type: "permission", networkEnabled: true, filesystemEntries: ["읽기: src", "쓰기: <outside-workspace>"],
+    } }]); await h.connect();
+    const text = h.element("approvals").children[0].children[2];
+    expect(text.textContent).toContain("네트워크: 접근 요청");
+    expect(text.textContent).toContain("파일 권한: 읽기: src");
+    expect(text.textContent).toContain("파일 권한: 쓰기: <outside-workspace>");
+    expect(text.children).toHaveLength(0);
+    expect(h.buttons()).toHaveLength(0);
+  });
   it("renders server display as text and submits one allowed decision despite repeated clicks", async () => {
     const h = harness(); await h.connect();
     const card = h.element("approvals").children[0];

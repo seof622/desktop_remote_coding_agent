@@ -61,17 +61,39 @@ export function approvalDisplay(project: Project, request: ProviderApprovalReque
     };
   }
   const permissions = request.details.permissions;
-  const filesystem = Array.isArray(permissions.filesystem) ? permissions.filesystem : [];
-  const filesystemEntries = filesystem
-    .map((entry) => typeof entry === "string" ? projectRelativePath(entry, project.workspacePath) : undefined)
-    .filter((entry): entry is string => Boolean(entry));
+  const filesystem = permissions.fileSystem !== null && typeof permissions.fileSystem === "object"
+    ? permissions.fileSystem as Record<string, unknown> : {};
+  const filesystemEntries: string[] = [];
+  const accessLabels: Record<string, string> = { read: "읽기", write: "쓰기", deny: "차단" };
+  const addPath = (mode: string, path: string | undefined) => {
+    if (path) filesystemEntries.push((Object.hasOwn(accessLabels, mode) ? accessLabels[mode] : "알 수 없는 접근") + ": " + path);
+  };
+  for (const mode of ["read", "write"] as const) {
+    if (Array.isArray(filesystem[mode])) {
+      for (const path of filesystem[mode]) if (typeof path === "string") addPath(mode, projectRelativePath(path, project.workspacePath));
+    }
+  }
+  const specialLabels: Record<string, string> = { root: "전체 파일시스템", minimal: "최소 시스템 경로", project_roots: "프로젝트 루트", tmpdir: "임시 디렉터리", slash_tmp: "/tmp" };
+  for (const value of Array.isArray(filesystem.entries) ? filesystem.entries : []) {
+    if (!value || typeof value !== "object") { addPath("unknown", "알 수 없는 범위"); continue; }
+    const entry = value as Record<string, unknown>;
+    const path = entry.path && typeof entry.path === "object" ? entry.path as Record<string, unknown> : {};
+    if (path.type === "path" && typeof path.path === "string") addPath(String(entry.access), projectRelativePath(path.path, project.workspacePath));
+    else if (path.type === "special" && path.value && typeof path.value === "object") {
+      const special = path.value as Record<string, unknown>;
+      const label = Object.hasOwn(specialLabels, String(special.kind)) ? specialLabels[String(special.kind)] : "알 수 없는 특수 범위";
+      const subpath = typeof special.subpath === "string" ? projectRelativePath(special.subpath, project.workspacePath) : undefined;
+      addPath(String(entry.access), label + (subpath ? " / " + subpath : ""));
+    } else if (path.type === "glob_pattern") addPath(String(entry.access), "패턴: " + (maskSensitiveText(typeof path.pattern === "string" ? path.pattern : undefined, project.workspacePath, 512) || "알 수 없는 패턴"));
+    else addPath(String(entry.access), "알 수 없는 범위");
+  }
   const network = permissions.network;
   const networkEnabled = network !== null && typeof network === "object"
     && (network as Record<string, unknown>).enabled === true;
   const reason = maskSensitiveText(request.details.reason, project.workspacePath, 500);
   return {
     type: "permission",
-    filesystemEntries,
+    filesystemEntries: [...new Set(filesystemEntries)],
     networkEnabled,
     ...(reason ? { reason } : {}),
   };

@@ -11,9 +11,11 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.verification.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:permissions": "tsx scripts/verify-permission-conformance.ts",
+    "verify:gateway": "tsx scripts/verify-gateway-conformance.ts"
   },
   "dependencies": {
     "@fastify/websocket": "^11.2.0",

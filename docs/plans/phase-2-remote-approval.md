@@ -217,10 +217,19 @@ Pending -> Accepted -> Resolved
 5. **Permission 수직 슬라이스**
    - 요청 permission을 정규화하고 동일 범위만 turn/session scope로 응답한다.
    - 거절·취소와 재시작 복구 동작을 실제 App Server에서 확인한 뒤 capability를 활성화한다.
+   - 진행: `0.159.3` 실제 App Server + 로컬 inference fixture에서 빈 profile 거절, 동일 profile scope 응답,
+     반복 요청·별도 Session·Pending interrupt 검증. `npm run verify:permissions`로 재실행 가능.
+   - 진행: `fileSystem.entries` 및 legacy read/write의 접근 모드·경로를 안전하게 표시하도록 수정.
+   - 보류: 실제 filesystem scope 적용 검증은 Windows 환경의 별도 명령 승인 요구로 실패.
+     network enforcement·취소 의미·재시작 검증과 capability 활성화는 후속 작업.
 6. **모바일 테스트 대시보드와 실기기 검증**
    - 완료: Pending 카드, 안전한 상세, 허용된 결정 버튼, 중복 클릭 방지와 최신 목록 기반 재연결 복구.
    - 완료: 대시보드 script 자동 테스트로 오래된 조회·socket callback, 종료된 승인 replay, 실패 복구를 검증.
    - 미수행: 실제 Codex·Tailscale 스마트폰에서 요청·수락·세션 승인·거절·취소·재연결 검증.
+   - `2026-10-21`: `0.163.0` 실제 App Server + 로컬 inference fixture + Gateway HTTP/WebSocket에서
+     명령 취소·미제공 결정 거부, 파일 변경 거절·취소, 중복 결정, Pending interrupt, 재연결 replay,
+     Permission fail-closed 및 재시작 후 오래된 승인 거부를 자동 검증했다 (`npm run verify:gateway`).
+     실제 명령 수락·세션 수락과 스마트폰 검증을 대신하지 않는다.
 
 ## Test plan
 
