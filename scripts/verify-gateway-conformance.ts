@@ -10,6 +10,7 @@ import { GatewayService } from "../src/gateway.js";
 import { CodexProvider } from "../src/provider.js";
 import { GatewayStore } from "../src/store.js";
 import type { AgentEvent, Approval } from "../src/types.js";
+import { gatewayFixtureCaseId } from "./gateway-fixture.js";
 
 // Real App Server + application HTTP/WebSocket boundary; inference stays on loopback.
 // Never accept command/file approvals, change OS policy, or read the user's Codex home.
@@ -24,39 +25,40 @@ await mkdir(codexHome);
 process.env.CODEX_HOME = codexHome;
 for (const key of ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_ACCESS_TOKEN", "ACCESS_TOKEN"]) delete process.env[key];
 
-let mode: "command" | "fileChange" | "permission" = "command";
+type FixtureMode = "command" | "fileChange" | "permission";
+interface FixtureCase { mode: FixtureMode; activeCall: string; issued: boolean; toolResult: string; patchToolAvailable: boolean }
+const cases = new Map<string, FixtureCase>();
+let caseCount = 0;
 let call = 0;
-let activeCall = "";
-let issued = false;
 let fixtureFailure = false;
-let toolResult = "";
-let patchToolAvailable = false;
 const fixture = createServer(async (request, response) => {
   try {
     let body = "";
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
+    const testCase = cases.get(gatewayFixtureCaseId(input.input) ?? "");
+    assert(testCase, "Fixture request has no known test case.");
     const tools = (input.tools || []).flatMap((tool: { type?: string; tools?: unknown[] }) => tool.type === "namespace" ? tool.tools : [tool]);
-    patchToolAvailable ||= tools.some((tool: { name?: string }) => tool.name === "apply_patch");
-    const result = input.input?.some((item: { call_id?: string; type?: string }) => item.call_id === activeCall
+    testCase.patchToolAvailable ||= tools.some((tool: { name?: string }) => tool.name === "apply_patch");
+    const result = input.input?.some((item: { call_id?: string; type?: string }) => item.call_id === testCase.activeCall
       && ["function_call_output", "custom_tool_call_output"].includes(item.type ?? ""));
-    if (result) toolResult = JSON.stringify(input.input.findLast((item: { call_id?: string }) => item.call_id === activeCall)?.output);
+    if (result) testCase.toolResult = JSON.stringify(input.input.findLast((item: { call_id?: string }) => item.call_id === testCase.activeCall)?.output);
     const id = ++call;
-    const item = issued && result ? {
+    const item = testCase.issued && result ? {
       type: "message", id: `msg_${id}`, role: "assistant",
       content: [{ type: "output_text", text: "fixture complete" }],
     } : (() => {
-      assert(!issued, "Fixture unexpectedly repeated an inference request.");
-      issued = true;
-      activeCall = `call_${id}`;
-      if (mode === "fileChange") return {
-        type: "custom_tool_call", id: `tool_${id}`, call_id: activeCall, name: "apply_patch",
+      assert(!testCase.issued, "Fixture unexpectedly repeated an inference request.");
+      testCase.issued = true;
+      testCase.activeCall = `call_${id}`;
+      if (testCase.mode === "fileChange") return {
+        type: "custom_tool_call", id: `tool_${id}`, call_id: testCase.activeCall, name: "apply_patch",
         input: `*** Begin Patch\n*** Add File: ${target.replaceAll("\\", "/")}\n+fixture\n*** End Patch`,
       };
       return {
-        type: "function_call", id: `fc_${id}`, call_id: activeCall,
-        name: mode === "permission" ? "request_permissions" : "exec_command",
-        arguments: JSON.stringify(mode === "permission"
+        type: "function_call", id: `fc_${id}`, call_id: testCase.activeCall,
+        name: testCase.mode === "permission" ? "request_permissions" : "exec_command",
+        arguments: JSON.stringify(testCase.mode === "permission"
           ? { permissions: { file_system: { write: [dirname(target)] }, network: { enabled: true } }, reason: "Gateway fixture" }
           : { cmd: `Set-Content -LiteralPath '${target.replaceAll("'", "''")}' -Value fixture`, shell: "powershell", login: false, max_output_tokens: 100 }),
       };
@@ -141,12 +143,14 @@ function privateDataAbsent(value: unknown, sessionId: string) {
   assert(!serialized.includes(directory) && !serialized.includes(directory.replaceAll("\\", "\\\\")), "Fixture path leaked.");
   assert(!/providerRequestId|providerRunId|providerConnectionId/.test(serialized), "Provider binding leaked.");
 }
-async function start(projectId: string, selected: typeof mode) {
-  mode = selected; issued = false; activeCall = ""; toolResult = "";
+async function start(projectId: string, selected: FixtureMode) {
+  const caseId = `gateway-fixture-case-${++caseCount}`;
+  const testCase: FixtureCase = { mode: selected, issued: false, activeCall: "", toolResult: "", patchToolAvailable: false };
+  cases.set(caseId, testCase);
   const session = await http("POST", "/sessions", { projectId, providerId: "codex" }, 201);
   const stream = await connect(session.id);
-  const run = await http("POST", `/sessions/${session.id}/runs`, { text: "Run the deterministic local fixture." }, 201);
-  return { session, run, ...stream };
+  const run = await http("POST", `/sessions/${session.id}/runs`, { text: `Run the deterministic local fixture. ${caseId}` }, 201);
+  return { session, run, testCase, ...stream };
 }
 
 const deadline = setTimeout(() => {
@@ -160,14 +164,14 @@ try {
   const project = await http("POST", "/projects", { name: "fixture", workspacePath: workspace }, 201);
   for (const type of ["command", "fileChange"] as const) {
     for (const decision of ["decline", "cancel"] as const) {
-      const { session, run, events } = await start(project.id, type);
+      const { session, run, events, testCase } = await start(project.id, type);
       await until(() => gateway.listApprovals({ sessionId: session.id, status: "Pending" }).length === 1
         || ["Completed", "Failed", "Interrupted"].includes(store.getRun(run.id).status), `${type} approval`);
       const approvals: Approval[] = await http("GET", `/approvals?sessionId=${session.id}&status=Pending`);
       if (approvals.length === 0 && type === "fileChange") {
         await assert.rejects(access(target));
-        console.log(JSON.stringify({ type, approvalVerified: false, patchToolAvailable, markerAbsent: true,
-          toolRejected: /rejected|not allowed|denied|Unknown tool/i.test(toolResult), runStatus: store.getRun(run.id).status }));
+        console.log(JSON.stringify({ type, approvalVerified: false, patchToolAvailable: testCase.patchToolAvailable, markerAbsent: true,
+          toolRejected: /rejected|not allowed|denied|Unknown tool/i.test(testCase.toolResult), runStatus: store.getRun(run.id).status }));
         await closeSockets();
         break;
       }

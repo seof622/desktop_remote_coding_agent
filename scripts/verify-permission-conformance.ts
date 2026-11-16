@@ -7,14 +7,18 @@ import { spawn } from "node:child_process";
 import { filesystemProbeResult } from "./conformance-probe.js";
 
 // Real Codex App Server; no remote inference or credentials. --enforcement writes only fixture markers.
-const directory = await mkdtemp(join(tmpdir(), "gateway-permission-conformance-"));
-assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
 const enforcement = process.argv.includes("--enforcement");
+const windowsReadiness = process.argv.includes("--windows-readiness");
+const permissionKind = process.argv.find((value) => value.startsWith("--permissions="))?.split("=")[1] ?? "mixed";
+assert(["mixed", "filesystem"].includes(permissionKind), "Invalid permission kind");
 const windowsSandbox = process.argv.find((value) => value.startsWith("--windows-sandbox="))?.split("=")[1];
 if (windowsSandbox) assert(["mxc", "elevated", "unelevated"].includes(windowsSandbox), "Invalid Windows sandbox mode");
 const setupSandbox = process.argv.includes("--setup-sandbox");
 assert(!setupSandbox || windowsSandbox, "Sandbox setup requires an explicit Windows sandbox mode");
 assert(!setupSandbox || windowsSandbox !== "mxc", "MXC requires no legacy setup");
+assert(!windowsReadiness || (!setupSandbox && !enforcement), "Readiness is a read-only diagnostic; do not combine it with setup or enforcement");
+const directory = await mkdtemp(join(tmpdir(), "gateway-permission-conformance-"));
+assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
 const targetDirectory = join(directory, "scope-target"); await mkdir(targetDirectory);
 let call = 0;
 let output: any;
@@ -38,7 +42,7 @@ const server = createServer(async (request, response) => {
   } : {
     type: "function_call", id: `fc_${++call}`, call_id: `call_${call}`, name: toolStage === "request" ? "request_permissions" : "exec_command",
     arguments: JSON.stringify(toolStage === "request"
-      ? { permissions: { network: { enabled: true }, file_system: { write: [targetDirectory] } }, reason: "Gateway conformance only" }
+      ? { permissions: { ...(permissionKind === "mixed" ? { network: { enabled: true } } : {}), file_system: { write: [targetDirectory] } }, reason: "Gateway conformance only" }
       : { cmd: `Write-Output 'fixture-probe-started'; try { [System.IO.File]::WriteAllText('${marker.replaceAll("'", "''")}', 'fixture') } catch { Write-Output 'fixture-write-denied' }; Write-Output 'fixture-probe-finished'`,
         shell: "powershell", login: false, yield_time_ms: 1000, max_output_tokens: 500 }),
   };
@@ -119,14 +123,22 @@ const turn = async (threadId: string, probe = false) => {
   let wrote = false; try { await access(marker); wrote = true; } catch { /* denied write */ }
   return { wrote, commandApprovals, commandOutput: output, permissionOutput };
 };
-function verifyWrite(result: Awaited<ReturnType<typeof turn>>, expected: boolean) {
+const filesystemResults: { decision: string; phase: string; result: string; verified: boolean }[] = [];
+function verifyWrite(result: Awaited<ReturnType<typeof turn>>, expected: boolean, phase: string) {
   const evidence = filesystemProbeResult(result.commandOutput, result.commandApprovals, result.wrote, expected);
-  console.log(JSON.stringify({ phase: "filesystem-enforcement", result: evidence, verified: evidence === "verified", networkVerified: false }));
-  assert.equal(evidence, "verified", `Filesystem enforcement not verified: ${evidence}`);
+  const entry = { decision: grant, phase, result: evidence, verified: evidence === "verified" };
+  filesystemResults.push(entry);
+  console.log(JSON.stringify({ ...entry, check: "filesystem-enforcement", expectedWrite: expected, wrote: result.wrote, networkVerified: false }));
 }
-try {
+async function verify() {
   await rpc("initialize", { clientInfo: { name: "gateway-conformance", version: "0.1.0" }, capabilities: { experimentalApi: true } });
   send({ method: "initialized" });
+  if (windowsReadiness) {
+    const readiness = await rpc("windowsSandbox/readiness");
+    assert(["ready", "notConfigured", "updateRequired"].includes(readiness.status), "Unknown Windows sandbox readiness status");
+    console.log(JSON.stringify({ phase: "windows-readiness", status: readiness.status, setupPerformed: false }));
+    return;
+  }
   if (setupSandbox) {
     const setupResult = new Promise<boolean>((resolve) => { setupComplete = resolve; });
     await rpc("windowsSandbox/setupStart", { mode: windowsSandbox });
@@ -138,23 +150,30 @@ try {
     const first = await turn(sessionId);
     assert(toolPresent); assert.equal(approvals - before, 1);
     const profile = first.permissionOutput?.permissions;
-    assert.equal(profile?.network?.enabled === true, decision !== "deny");
+    assert.equal(profile?.network?.enabled === true, decision !== "deny" && permissionKind === "mixed");
     assert.equal(first.permissionOutput?.scope, decision === "session" ? "session" : "turn");
     if (decision === "deny") assert.equal(profile?.file_system ?? null, null);
     else assert.deepEqual(profile?.file_system?.write, [targetDirectory]);
     console.log(JSON.stringify({ decision, phase: "first-turn", scope: first.permissionOutput?.scope, exactPermissions: true }));
-    if (enforcement) verifyWrite(first, decision !== "deny");
+    if (enforcement) verifyWrite(first, decision !== "deny", "first-turn");
     before = approvals; const next = await turn(sessionId, enforcement);
     assert.equal(approvals - before, enforcement ? 0 : 1);
-    if (enforcement) verifyWrite(next, decision === "session");
-    console.log(JSON.stringify({ decision, phase: "next-turn", protocolVerified: true, enforcementVerified: enforcement }));
+    if (enforcement) verifyWrite(next, decision === "session", "next-turn");
+    console.log(JSON.stringify({ decision, phase: "next-turn", protocolVerified: true, enforcementVerified: enforcement && filesystemResults.at(-1)?.verified === true }));
     before = approvals; const other = await turn(await thread(), enforcement);
     assert.equal(approvals - before, enforcement ? 0 : 1);
-    if (enforcement) verifyWrite(other, false);
-    console.log(JSON.stringify({ decision, phase: "other-session", protocolVerified: true, enforcementVerified: enforcement }));
+    if (enforcement) verifyWrite(other, false, "other-session");
+    console.log(JSON.stringify({ decision, phase: "other-session", protocolVerified: true, enforcementVerified: enforcement && filesystemResults.at(-1)?.verified === true }));
   }
   grant = "interrupt"; const before = resolved; await turn(await thread());
   console.log(JSON.stringify({ phase: "interrupt", runInterrupted: true, resolvedNotification: resolved > before }));
+  const filesystemVerified = enforcement && filesystemResults.length === 9 && filesystemResults.every((entry) => entry.verified);
+  console.log(JSON.stringify({ phase: "summary", permissionKind, windowsSandbox: windowsSandbox ?? "default", protocolVerified: true,
+    filesystemVerified, networkVerified: false, filesystemResults }));
+  if (enforcement && !filesystemVerified) process.exitCode = 1;
+}
+try {
+  await verify();
 } finally {
   clearTimeout(deadline); child.stdin.end();
   const shutdown = setTimeout(() => child.kill(), 2000); await exited; clearTimeout(shutdown);

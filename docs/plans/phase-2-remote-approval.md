@@ -222,6 +222,10 @@ Pending -> Accepted -> Resolved
    - 진행: `fileSystem.entries` 및 legacy read/write의 접근 모드·경로를 안전하게 표시하도록 수정.
    - 보류: 실제 filesystem scope 적용 검증은 Windows 환경의 별도 명령 승인 요구로 실패.
      network enforcement·취소 의미·재시작 검증과 capability 활성화는 후속 작업.
+   - `2026-11-16`: `0.169.0` Windows 파일 전용 scope 검사에서 무권한 쓰기 차단 6개는 확인했으나,
+     승인된 쓰기 3개는 unelevated sandbox 경로 구성 미지원으로 실패했다. MXC도 실행 불가였다.
+     준비 상태 조회·9개 결과 수집·거절 증거 검사를 보완했고 capability는 false를 유지한다.
+     상세 결과와 Windows 후속 조건은 `docs/plans/permission-approvals.md`에 기록했다.
 6. **모바일 테스트 대시보드와 실기기 검증**
    - 완료: Pending 카드, 안전한 상세, 허용된 결정 버튼, 중복 클릭 방지와 최신 목록 기반 재연결 복구.
    - 완료: 대시보드 script 자동 테스트로 오래된 조회·socket callback, 종료된 승인 replay, 실패 복구를 검증.

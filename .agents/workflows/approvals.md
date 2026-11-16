@@ -56,6 +56,12 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
   명령 수락/세션 수락, 실제 모델, 스마트폰 및 Permission enforcement의 검증 완료로 해석하지 않는다.
 - filesystem enforcement는 marker 미생성과 명령 실행의 시작·종료 증거를 함께 확인한다.
   별도 Command Approval 차단이나 프로세스 시작 실패는 권한 거절 성공이 아닌 미검증 실패다.
+- `0.169.0` Windows 재검증에서도 기본 계약은 통과했으나, unelevated의 승인 후 쓰기는
+  `sandbox-layout-unsupported`, MXC는 `sandbox-unavailable`로 미검증이다. 무권한 쓰기 차단만으로
+  turn 만료·session 유지·격리 검증 완료를 주장하지 않는다. Permission capability는 계속 false다.
+- Permission 검증 도구는 파일 전용 요청과 혼합 요청을 구분하고 9개 scope 결과를 수집한다.
+  일부라도 실패하면 실패 종료 코드를 유지한다. 쓰기 거절은 시작·종료뿐 아니라 오류 출력도 요구한다.
+  `--windows-readiness`는 준비 상태 조회 전용이며 OS setup을 수행하지 않는다.
 - `2026-11-16` 사용자가 실제 Codex·Tailscale 스마트폰의 안내된 명령/파일 승인·재연결·Pending interrupt
   수동 검증 완료를 보고했다. 제공되는 Session 승인도 안내 범위에 포함되지만, Session 간 권한 격리와
   Permission enforcement 검증 완료로 해석하지 않는다. 실기기 화면·결정별 로그·CLI 버전은 직접 확인하지 않았다.

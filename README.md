@@ -512,6 +512,26 @@ turn 만료, session 유지 및 별도 Session 분리를 추가 검사한다. �
 도구는 이를 `sandbox-layout-unsupported`로 실패 처리한다. 설정 저장·관리자 setup은 수행하지 않았으며,
 이 결과는 승인 후 권한 적용·만료·세션 유지의 검증 완료를 의미하지 않는다.
 
+`2026-11-16`, `codex-cli 0.169.0`에서도 기본 Permission 계약과 Pending interrupt는 통과했다.
+Windows 전용 재검증은 다음 명령을 사용한다.
+
+```powershell
+npm.cmd run verify:permissions -- --windows-readiness
+npm.cmd run verify:permissions -- --enforcement --windows-sandbox=unelevated --permissions=filesystem
+```
+
+`--windows-readiness`는 준비 상태만 조회하며 설치를 수행하지 않는다. 이번 임시 환경의 응답은
+`notConfigured`였다. `--permissions=filesystem`은 network 권한을 요청하지 않고 파일 쓰기만 검사한다.
+기본값 `mixed`는 기존 filesystem/network 요청 계약을 유지한다. 실제 network enforcement는 두 모드 모두 미검증이다.
+enforcement는 deny/turn/session 각각에서 첫 Turn·다음 Turn·별도 Session의 9개 결과를 수집하며,
+하나라도 미검증이면 종료 코드 1과 `summary.filesystemVerified=false`를 반환한다.
+
+unelevated 검사에서는 무권한 쓰기 차단 6개를 확인했으나 승인 후 쓰기가 필요한 3개는
+`sandbox-layout-unsupported`로 실행되지 않았다. 따라서 turn 만료·session 유지·격리의 전체 검증은
+미완료다. MXC 검사도 `sandbox-unavailable`로 9개 모두 실행되지 않았다. 관리자 setup과 OS 정책 변경은
+수행하지 않았으며 Permission capability는 계속 `false`다. 거절 성공 판정은 명령 시작·종료,
+쓰기 오류 출력, marker 미생성을 함께 요구한다.
+
 권한 표시 데이터는 Codex의 `fileSystem.entries`와 legacy `read`/`write`를 읽어 접근 모드·특수 범위를 표시한다.
 개인 경로는 Project 상대 경로 또는 `<outside-workspace>`로 변환하며, Dashboard는 이를 텍스트로 표시한다.
 
@@ -534,6 +554,9 @@ turn 만료, session 유지 및 별도 Session 분리를 추가 검사한다. �
 미수행으로 표시한다. 명령 수락·세션 수락의 실제 실행, Permission의 실제 권한 적용, 실제 모델 및 Tailscale
 스마트폰 화면 검증은 이 도구의 성공 범위에 포함하지 않는다. PowerShell 실행 정책이 npm.ps1을 차단하면
 `npm.cmd run verify:gateway`처럼 npm.cmd를 사용한다. `npm run typecheck`는 검증 스크립트도 검사한다.
+
+`2026-11-16`, `0.169.0`에서도 위 Gateway 연동 검증을 통과했다. 종료된 작업의 늦은 inference 요청이
+다음 검사 상태를 덮어쓰지 않도록 loopback fixture의 상태를 고유한 테스트 prompt별로 분리했다.
 
 ---
 
