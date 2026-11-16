@@ -225,7 +225,10 @@ Pending -> Accepted -> Resolved
 6. **모바일 테스트 대시보드와 실기기 검증**
    - 완료: Pending 카드, 안전한 상세, 허용된 결정 버튼, 중복 클릭 방지와 최신 목록 기반 재연결 복구.
    - 완료: 대시보드 script 자동 테스트로 오래된 조회·socket callback, 종료된 승인 replay, 실패 복구를 검증.
-   - 미수행: 실제 Codex·Tailscale 스마트폰에서 요청·수락·세션 승인·거절·취소·재연결 검증.
+   - `2026-11-16` 사용자 완료 보고: 실제 Codex·Tailscale 스마트폰에서 안내된 명령/파일 승인 수락·거절·취소,
+     제공되는 Session 승인, 재연결 후 Pending 복구·종료 카드 재등장 방지, Pending interrupt 검증.
+     실기기 화면·결정별 로그·CLI 버전은 에이전트가 직접 확인하지 않았다. Session 승인 범위의 격리와
+     Permission 검증은 이 보고로 완료 처리하지 않는다.
    - `2026-10-21`: `0.163.0` 실제 App Server + 로컬 inference fixture + Gateway HTTP/WebSocket에서
      명령 취소·미제공 결정 거부, 파일 변경 거절·취소, 중복 결정, Pending interrupt, 재연결 replay,
      Permission fail-closed 및 재시작 후 오래된 승인 거부를 자동 검증했다 (`npm run verify:gateway`).

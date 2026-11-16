@@ -72,4 +72,7 @@ Tailscale에 연결된 스마트폰 브라우저에서 Gateway의 Project 등록
 - [x] Tailscale 스마트폰에서 Run 스트리밍과 interrupt를 확인하고, 네트워크 복구 후 페이지의
   `목록 새로고침`으로 WebSocket을 다시 연결해 `afterSequence` 이후 이벤트가 이어지는 것을 검증했다.
 - [x] 대시보드 script 자동 테스트로 안전한 상세, 허용 결정, 중복 클릭, 응답 경합과 실패 복구를 검증했다.
-- [ ] 승인 UI의 실제 Codex·Tailscale 스마트폰 수락·거절·취소·재연결을 검증한다.
+- [x] 승인 UI의 실제 Codex·Tailscale 스마트폰 수락·거절·취소·재연결을 검증한다.
+  `2026-11-16` 사용자가 안내 절차 완료를 보고했다. 제공되는 Session 승인, Pending interrupt,
+  종료 카드 재등장 방지도 안내 범위에 포함된다. 에이전트의 실기기 직접 확인은 아니며
+  Session 승인 범위의 격리 및 Permission 검증 완료를 의미하지 않는다.

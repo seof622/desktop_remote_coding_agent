@@ -473,10 +473,21 @@ Command와 File Change approval은 요청을 SQLite에 먼저 저장한 뒤 `app
 `serverRequest/resolved`, Run 종료 또는 Provider response 전달 실패 시 `approval.resolved`를 발행한다.
 모바일 재연결 시 기존 이벤트 replay와 Pending Approval 조회를 함께 사용한다. Dashboard에서 Command/File Change
 요청과 허용된 결정을 확인할 수 있다. UI 자동 테스트와 아래 로컬 fixture 연동 검증은 통과했으며,
-실제 모델·스마트폰 승인 검증은 후속 작업이다.
+실제 모델·Tailscale 스마트폰 승인 수동 검증은 `2026-11-16` 사용자 완료 보고로 기록했다.
+검증 범위는 아래 수동 검증 기록을 따른다.
 Gateway 재시작 시 이전 연결의 미해결 Approval은
 `PROVIDER_APPROVAL_UNAVAILABLE`로 종료하며 오래된 Provider request ID를 재생하지 않는다. Permission approval은
 자동 수락하지 않고 안전하게 실패한다.
+
+### 스마트폰 승인 수동 검증 기록
+
+`2026-11-16`, 사용자가 안내된 실제 Codex·Tailscale 스마트폰 검증 절차를 모두 완료했다고 보고했다.
+일반 답변·스트리밍, Command/File Change의 수락·거절·취소와 제공되는 Session 승인,
+연결 복구 후 Pending 조회·종료된 카드 재등장 방지, 승인 대기 중 interrupt를 수동 검증 범위로 기록한다.
+이 기록은 사용자 보고이며 에이전트가 실기기 화면이나 실행 로그를 직접 확인한 결과는 아니다.
+실제 CLI 버전과 결정별 로그는 별도로 수집하지 않았다. Session 승인의 세부 적용 범위·다른 Session과의
+격리 및 Permission의 실제 권한 적용·만료·취소 의미 검증은 이 완료 보고로 확정하지 않는다.
+Permission capability는 계속 `false`다.
 
 ### Permission 승인 검증
 

@@ -8,7 +8,7 @@
 
 - Pending 카드, 안전한 상세, `availableDecisions`에 포함된 버튼, 중복 클릭 방지.
 - 선택 Session 또는 전체 Session의 대기 목록 조회, 재연결 및 이벤트 후 상태 재조회.
-- Permission 활성화와 실제 Codex·스마트폰 검증은 후속 작업이다.
+- Permission 활성화는 후속 작업이다. 실제 Codex·스마트폰 수동 검증은 아래 사용자 보고를 기록한다.
 
 ## Affected boundaries
 
@@ -36,7 +36,15 @@
 - 실제 대시보드 script를 DOM/socket/fetch harness에서 실행한다.
 - 안전한 표시, 제한된 결정, 중복 클릭, 실패 복구, 종료 이벤트와 과거 replay를 검증한다.
 - Session 전환·Token 제거 후 늦은 응답 및 socket callback이 UI를 복구하지 못하는지 검증한다.
-- 전체 테스트, typecheck, build 실행. 실기기 검증은 미수행으로 기록한다.
+- 전체 테스트, typecheck, build 실행. 실기기 검증은 아래 수동 검증 기록으로 구분한다.
+
+## Manual verification record (2026-11-16)
+
+- 사용자가 안내된 실제 Codex·Tailscale 스마트폰 검증 절차를 모두 완료했다고 보고했다.
+- 안내 범위: 일반 답변·스트리밍, 명령/파일 승인 수락·거절·취소와 제공되는 Session 승인,
+  재연결 후 Pending 복구·종료 카드 재등장 방지, 승인 대기 중 interrupt.
+- 에이전트가 실기기 화면·결정별 로그·CLI 버전을 직접 확인한 결과는 아니다.
+  Session 승인 범위의 격리 및 Permission 실제 권한 적용 검증은 별도로 남는다.
 
 ## Documentation updates
 

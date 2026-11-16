@@ -56,6 +56,9 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
   명령 수락/세션 수락, 실제 모델, 스마트폰 및 Permission enforcement의 검증 완료로 해석하지 않는다.
 - filesystem enforcement는 marker 미생성과 명령 실행의 시작·종료 증거를 함께 확인한다.
   별도 Command Approval 차단이나 프로세스 시작 실패는 권한 거절 성공이 아닌 미검증 실패다.
+- `2026-11-16` 사용자가 실제 Codex·Tailscale 스마트폰의 안내된 명령/파일 승인·재연결·Pending interrupt
+  수동 검증 완료를 보고했다. 제공되는 Session 승인도 안내 범위에 포함되지만, Session 간 권한 격리와
+  Permission enforcement 검증 완료로 해석하지 않는다. 실기기 화면·결정별 로그·CLI 버전은 직접 확인하지 않았다.
 - Dashboard는 서버가 마스킹한 `display`를 텍스트로 표시하고 `availableDecisions` 중 지원하는 결정만 제공한다.
   결정 중 버튼을 잠그며 자동 재전송하지 않는다. 연결·승인 이벤트·결정 결과 뒤 Pending 목록을 재조회한다.
   과거 replay로 종료된 카드를 재생하지 않으며, Session/Token 전환 후 늦은 응답은 무시한다.
