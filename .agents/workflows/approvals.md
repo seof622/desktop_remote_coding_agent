@@ -62,6 +62,11 @@ Pending -> Accepted | Declined | Cancelled -> Resolved
 - Permission 검증 도구는 파일 전용 요청과 혼합 요청을 구분하고 9개 scope 결과를 수집한다.
   일부라도 실패하면 실패 종료 코드를 유지한다. 쓰기 거절은 시작·종료뿐 아니라 오류 출력도 요구한다.
   `--windows-readiness`는 준비 상태 조회 전용이며 OS setup을 수행하지 않는다.
+- `2026-11-17` Ubuntu 24.04 WSL2와 Linux `0.169.0`에서 파일 전용 enforcement 9개가 통과했다.
+  승인 후 쓰기·turn 만료·session 유지·다른 Session 격리를 확인했다. Gateway 연동도 통과했으나
+  network enforcement와 Permission cancel 의미는 미검증이므로 Permission capability는 false를 유지한다.
+  fixture는 OS별 shell을 사용하며, 명령 승인 검사는 명시적 escalation 요청을 거절·취소한다.
+  승인 표시 텍스트의 `/tmp` 등 POSIX 절대 경로도 마스킹한다.
 - `2026-11-16` 사용자가 실제 Codex·Tailscale 스마트폰의 안내된 명령/파일 승인·재연결·Pending interrupt
   수동 검증 완료를 보고했다. 제공되는 Session 승인도 안내 범위에 포함되지만, Session 간 권한 격리와
   Permission enforcement 검증 완료로 해석하지 않는다. 실기기 화면·결정별 로그·CLI 버전은 직접 확인하지 않았다.

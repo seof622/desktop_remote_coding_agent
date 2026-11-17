@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { filesystemProbeResult } from "./conformance-probe.js";
+import { fixtureWriteCommand } from "./conformance-command.js";
 
 // Real Codex App Server; no remote inference or credentials. --enforcement writes only fixture markers.
 const enforcement = process.argv.includes("--enforcement");
@@ -14,6 +15,7 @@ assert(["mixed", "filesystem"].includes(permissionKind), "Invalid permission kin
 const windowsSandbox = process.argv.find((value) => value.startsWith("--windows-sandbox="))?.split("=")[1];
 if (windowsSandbox) assert(["mxc", "elevated", "unelevated"].includes(windowsSandbox), "Invalid Windows sandbox mode");
 const setupSandbox = process.argv.includes("--setup-sandbox");
+assert(process.platform === "win32" || (!windowsSandbox && !windowsReadiness && !setupSandbox), "Windows sandbox options require Windows");
 assert(!setupSandbox || windowsSandbox, "Sandbox setup requires an explicit Windows sandbox mode");
 assert(!setupSandbox || windowsSandbox !== "mxc", "MXC requires no legacy setup");
 assert(!windowsReadiness || (!setupSandbox && !enforcement), "Readiness is a read-only diagnostic; do not combine it with setup or enforcement");
@@ -43,8 +45,7 @@ const server = createServer(async (request, response) => {
     type: "function_call", id: `fc_${++call}`, call_id: `call_${call}`, name: toolStage === "request" ? "request_permissions" : "exec_command",
     arguments: JSON.stringify(toolStage === "request"
       ? { permissions: { ...(permissionKind === "mixed" ? { network: { enabled: true } } : {}), file_system: { write: [targetDirectory] } }, reason: "Gateway conformance only" }
-      : { cmd: `Write-Output 'fixture-probe-started'; try { [System.IO.File]::WriteAllText('${marker.replaceAll("'", "''")}', 'fixture') } catch { Write-Output 'fixture-write-denied' }; Write-Output 'fixture-probe-finished'`,
-        shell: "powershell", login: false, yield_time_ms: 1000, max_output_tokens: 500 }),
+      : { ...fixtureWriteCommand(marker, true), yield_time_ms: 1000, max_output_tokens: 500 }),
   };
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   response.end(`event: response.output_item.done\ndata: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item })}\n\nevent: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { id: `resp_${call}`, status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })}\n\n`);

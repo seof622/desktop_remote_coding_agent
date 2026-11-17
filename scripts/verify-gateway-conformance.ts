@@ -11,6 +11,7 @@ import { CodexProvider } from "../src/provider.js";
 import { GatewayStore } from "../src/store.js";
 import type { AgentEvent, Approval } from "../src/types.js";
 import { gatewayFixtureCaseId } from "./gateway-fixture.js";
+import { fixtureWriteCommand } from "./conformance-command.js";
 
 // Real App Server + application HTTP/WebSocket boundary; inference stays on loopback.
 // Never accept command/file approvals, change OS policy, or read the user's Codex home.
@@ -60,7 +61,8 @@ const fixture = createServer(async (request, response) => {
         name: testCase.mode === "permission" ? "request_permissions" : "exec_command",
         arguments: JSON.stringify(testCase.mode === "permission"
           ? { permissions: { file_system: { write: [dirname(target)] }, network: { enabled: true } }, reason: "Gateway fixture" }
-          : { cmd: `Set-Content -LiteralPath '${target.replaceAll("'", "''")}' -Value fixture`, shell: "powershell", login: false, max_output_tokens: 100 }),
+          : { ...fixtureWriteCommand(target), sandbox_permissions: "require_escalated",
+            justification: "Gateway conformance only", max_output_tokens: 100 }),
       };
     })();
     response.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -176,6 +178,7 @@ try {
         break;
       }
       const approval = approvals[0]!;
+      assert(approval, `Runtime did not request ${type} approval (run ${store.getRun(run.id).status}).`);
       assert.equal(approval.type, type);
       const offered = approval.availableDecisions.includes(decision);
       const selected = offered ? decision : "cancel";

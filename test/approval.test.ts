@@ -98,4 +98,21 @@ describe("approvalDisplay", () => {
       reason: "change files safely",
     });
   });
+
+  it("masks POSIX absolute paths beyond home directories without hiding URLs or relative paths", () => {
+    const request: ProviderApprovalRequest = {
+      type: "command", binding, availableDecisions: ["cancel"],
+      details: { type: "command", kind: "command", cwd: workspacePath,
+        command: `printf fixture > '/tmp/private-marker' --config=/var/tmp/private-config /mnt/c/private /opt/private /srv/private /run/private https://example.test/api/v1 src/relative.txt "${workspacePath}"`,
+        reason: "write(/tmp/private-reason)",
+      },
+    };
+    const display = approvalDisplay(project, request);
+    const serialized = JSON.stringify(display);
+    expect(serialized).not.toContain("private");
+    expect(display).toMatchObject({ reason: "write(<path>)" });
+    expect(serialized).toContain("https://example.test/api/v1");
+    expect(serialized).toContain("src/relative.txt");
+    expect(serialized).toContain("<workspace>");
+  });
 });

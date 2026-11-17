@@ -23,7 +23,7 @@ function maskSensitiveText(value: string | undefined, workspacePath: string, max
     .replace(/((?:--?(?:token|api[_-]?key|password|secret))\s+)(?:"[^"]*"|'[^']*'|\S+)/gi, "$1<redacted>")
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
     .replace(/[A-Za-z]:\\[^\s"'`;]+/g, "<path>")
-    .replace(/\/(?:Users|home)\/[^\s"'`;]+/g, "<path>")
+    .replace(/(^|[\s"'`=:(>])\/(?!\/)[^\s"'`;<>()|]+/g, "$1<path>")
     .slice(0, maxLength);
 }
 

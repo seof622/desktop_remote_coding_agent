@@ -53,6 +53,25 @@
 
 ## Documentation updates
 
+### 2026-11-17 WSL2 개발 환경 구성 계획
+
+- 목표: Ubuntu 24.04 WSL2에 일반 개발 사용자, Linux Node.js/Codex와 독립 작업 사본을 구성한다.
+- 경계: Mobile API와 Gateway의 capability·승인 상태 전이는 유지한다. App Server는 WSL 내부의
+  Linux 실행 파일과 stdio를 사용하고 저장소는 Linux 파일시스템에 둔다.
+- 검증 fixture의 명령을 OS별로 선택한다. Windows는 기존 PowerShell 동작을 유지하고 Linux는
+  Bash를 사용한다. 경로를 shell 인자로 안전하게 인용하며 같은 실행·쓰기 거절 증거를 요구한다.
+- Windows 전용 진단·설정 옵션은 Linux에서 실행 전에 거부한다. 외부 API와 이벤트 계약 변경은 없다.
+- 비밀값·기존 사용자 설정·DB·node_modules는 복사하지 않는다. Gateway는 loopback으로만 점검하며
+  Codex 인증과 Tailscale 원격 연결은 별도 단계로 남긴다.
+- 테스트: 경로 인용·실제 Linux 쓰기 성공/실패 증거, 전체 자동 테스트·typecheck·build,
+  기본 Permission 계약·파일 enforcement·Gateway HTTP/WebSocket 연동과 health를 확인한다.
+- 실패는 그대로 기록하고 검증에 실패한 Permission capability를 활성화하지 않는다. README와
+  이 계획에 실행 환경·확인 결과·남은 작업을 기록한다.
+- WSL 실검증에서 `/tmp` 절대 경로가 승인 표시 텍스트에 남는 문제를 확인했다. POSIX 절대 경로를
+  경계 기준으로 마스킹하고 URL·상대 경로를 보존하는 회귀 테스트를 추가한다. Command fixture는
+  sandbox 실패가 자동 승인 요청으로 이어진다고 가정하지 않고 명시적으로 escalation을 요청하되
+  모든 명령 승인에 기존 거절·취소 정책을 유지한다.
+
 ### 2026-11-16 Windows 검증 보완 계획
 
 - WSL을 사용하지 않고 설치된 `0.169.0` App Server와 기존 Windows sandbox만 검사한다.
@@ -145,3 +164,26 @@
 - 다음 Windows 작업: sandbox 초기 설정 또는 실행 가능한 backend 확보 후 승인된 파일 쓰기를 먼저
   재검증한다. 그 다음 turn 만료·session 유지·격리와 network enforcement·Permission cancel 의미를
   확인한다. PC의 계정·ACL·네트워크 정책을 변경하는 초기 설정은 별도 승인 없이 수행하지 않는다.
+
+### 2026-11-17 WSL2 구성 및 검증 결과
+
+- 사용자 요청으로 Ubuntu 24.04 WSL2를 설치하고 기본 배포판으로 지정했다. Docker 배포판은 유지했다.
+- 일반 사용자 `dev`에 Node.js `22.23.5` (공식 배포 SHA256 확인), npm `10.9.9`, Codex `0.169.0`,
+  Git `2.43.0`, Python·빌드 도구·bubblewrap을 구성했다. Codex와 Node 모두 Linux 실행 파일이다.
+- 저장소의 최신 커밋을 Linux 파일시스템에 별도로 복제하고 이 변경을 반영했다. 비밀값·Windows
+  Codex 설정/인증·DB·node_modules·기존 미추적 파일은 복사하지 않았다. 작업 사본은 자동 동기화하지 않는다.
+- 로컬 `gateway-dev` launcher와 저장소 밖의 권한 `600` 환경 파일, 무작위 Client Token을 생성했다.
+  loopback 기동 후 인증 health 200·미인증 401을 확인하고 서버를 종료했다. 자동 시작·원격 연결은 미구성이다.
+- OS별 PowerShell/Bash fixture를 사용한다. Linux에서 sandbox 실패만으로 Command 승인이 발생한다는
+  가정을 제거하고 명시적 escalation 요청을 거절·취소했다. 승인 미발생 오류도 안전한 진단으로 표시한다.
+- Gateway 연동 검사가 `/tmp` 경로 표시 노출을 발견했다. POSIX 절대 경로 마스킹을 보완하고
+  URL·상대 경로 보존 및 shell 메타문자가 든 경로 인용 회귀 테스트를 추가했다.
+- Linux 자동 테스트 61개, typecheck·build, 기본 혼합 Permission 계약·Pending interrupt,
+  파일 전용 enforcement 9개가 통과했다. 승인 쓰기 3개와 무권한 차단 6개를 실제 실행 증거로 확인했다.
+- Gateway 명령 취소·미제공 decline 400 거부, 파일 거절/취소, 중복 결정, 이벤트 replay,
+  Pending interrupt, 미지원 Permission 실패와 재시작 복구가 통과했다. Command decline 자체는
+  runtime이 제공하지 않아 미검증이며 대신 cancel했다. 명령 수락은 수행하지 않았다.
+- 남은 작업: WSL Codex 로그인 및 실제 모델 사용, Tailscale 모바일 연결, network enforcement,
+  Permission cancel 의미와 capability 활성화 판단. Windows 네이티브 sandbox 제약은 해결한 것으로 표시하지 않는다.
+- Windows 회귀 검증도 테스트 60개 통과·Linux 전용 1개 생략, typecheck·build·Gateway 연동 통과다.
+  Gateway 검사는 호스트 sandbox의 사용자 정보 조회 실패 뒤 sandbox 밖에서 재실행했다.

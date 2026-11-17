@@ -384,9 +384,60 @@ npm run dev
 | `GATEWAY_BIND_HOST` | `127.0.0.1` | loopback 또는 명시적인 Tailscale IPv4 주소 |
 | `GATEWAY_PORT` | `8787` | Gateway HTTP/WebSocket 포트 |
 | `GATEWAY_DATA_DIR` | `data/` | SQLite 상태 저장 경로. Git에 포함하지 않는다. |
-| `GATEWAY_WORKSPACE_ROOTS` | 현재 작업 디렉터리 | 허용 Workspace root 목록. Windows에서는 `;`로 구분 |
+| `GATEWAY_WORKSPACE_ROOTS` | 현재 작업 디렉터리 | 허용 Workspace root 목록. Windows에서는 `;`, Linux에서는 `:`로 구분 |
 | `CODEX_COMMAND` | `codex` | Codex CLI 실행 파일 |
 | `CODEX_APP_SERVER_ARGS` | `app-server` | Codex App Server 인자 |
+
+### WSL2 개발 환경
+
+`2026-11-17` 로컬 환경에 Ubuntu 24.04 WSL2와 일반 사용자 `dev`, Node.js `22.23.5`,
+Codex CLI `0.169.0`, Git·Python·빌드 도구·bubblewrap을 구성했다. Ubuntu를 기본 배포판으로
+지정했으며 Docker용 배포판은 유지했다. Windows 저장소를 보존하고 Linux 파일시스템의
+`~/code/desktop_remote_coding_agent`에 별도 Git 작업 사본과 Linux 의존성을 설치했다.
+두 작업 사본은 자동 동기화되지 않는다. 기존 비밀값·Codex 인증·DB·미추적 파일은 복사하지 않았다.
+
+PowerShell에서 개발 셸을 연다.
+
+```powershell
+wsl -d Ubuntu-24.04 --cd ~
+```
+
+WSL 셸에서는 다음 명령을 사용한다. 실제 모델을 사용하려면 WSL의 Codex에 별도로 로그인한다.
+
+```bash
+cd ~/code/desktop_remote_coding_agent
+codex login --device-auth
+gateway-dev
+```
+
+`gateway-dev`는 이 로컬 환경에 구성한 실행 명령이다. 빌드 결과를 실행하므로 소스를 변경하면
+`npm run build` 후 다시 시작한다. 설정과 무작위 Client Token은 저장소 밖의
+`~/.config/desktop-gateway/environment`에 권한 `600`으로 저장하고 launcher가 읽는다.
+DB는 `~/.local/share/desktop-gateway`를 사용한다. 인증 파일이나 Token을 저장소·로그에 복사하지 않는다.
+`dev`는 비밀번호를 지정하지 않은 일반 사용자이며 필요한 관리자 작업은 PowerShell의
+`wsl -d Ubuntu-24.04 -u root`로 별도 수행할 수 있다.
+
+Gateway는 loopback에만 바인딩하며 자동 시작 서비스나 Tailscale 원격 경로는 구성하지 않았다.
+로컬 인증 health 점검 후 서버를 종료했다. Windows의 Tailscale 연결만으로 WSL Gateway의 모바일
+접근까지 검증됐다고 해석하지 않는다. Codex App Server는 Gateway의 stdio 자식 프로세스로 유지한다.
+
+WSL에서 재검증하는 명령은 다음과 같다.
+
+```bash
+npm test
+npm run typecheck
+npm run build
+npm run verify:permissions
+npm run verify:permissions -- --enforcement --permissions=filesystem
+npm run verify:gateway
+```
+
+WSL 자동 테스트 61개, typecheck·build, 기본 Permission 계약과 파일 enforcement 9개,
+Gateway HTTP/WebSocket·재연결·재시작 및 인증 health 검증이 통과했다. fixture는 OS에 맞는
+PowerShell/Bash 명령을 사용하고 Command 승인 검사는 명시적 escalation을 요청한 뒤 거절·취소한다.
+승인 표시에서는 `/tmp` 등을 포함한 POSIX 절대 경로를 마스킹한다.
+실제 모델·모바일 연결·network enforcement·Permission cancel 의미는 미검증이며
+Permission capability는 계속 `false`다. Windows 네이티브 sandbox 제약은 별도 과제로 남는다.
 
 ## Mobile API
 
